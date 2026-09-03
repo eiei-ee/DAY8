@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+day8-prototype/runs/
+day8-prototype/llm_out.json
+
+# Tuanjie / Unity generated state
+Day8Unity/Library/
+Day8Unity/Temp/
+Day8Unity/Logs/
+Day8Unity/obj/
+Day8Unity/UserSettings/
+*.csproj
+*.sln
+*.user
+
+# Build and test outputs
+Build/
+*.log
+test-results*.xml
+
+# IDE / OS
+.vs/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

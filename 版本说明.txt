@@ -1,0 +1,20 @@
+《第八天 / DAY 8》项目快照（最新版）
+整理日期：2026-09-03
+来源：本地开发快照（机器路径已移除）
+
+内容：
+1. day8-prototype\   Python 机制验证原型（22 项测试全绿）
+   运行：python run_full.py --seed 42 --strategy kind_then_betray --verbose
+   测试：python -m unittest discover -s tests
+2. Day8Unity\        团结引擎 2022.3.62t8 工程（20 项 EditMode 测试全绿）
+   打开后 Library 会自动重建；构建：执行 Day8.Editor.BuildGame.BuildAll
+   （新增 .cs 后第一次 bee 增量可能漏文件，重跑一次构建即可）
+3. Build\Day8\Day8.exe   可玩版（本快照对应的最新构建）
+   操作：鼠标点选项，或数字键 1-9 选择、回车确认；打字中按任意键快进；
+   Esc 让聊天框失焦。
+   LLM 台词需要本机 Ollama（qwen2.5:7b）运行：ollama serve
+   不运行也不影响游戏，台词回退模板并在报告标注来源。
+
+本轮特性：感知限制、误解机制（藏电池→错误归因→可纠正/可利用→影响第八天）、
+程序化音效（心跳/扫描/警报/夜间音）、打字机对白、本地 LLM 台词（带记忆 ID 校验）、
+认知谱系跨局继承、自适应导演。

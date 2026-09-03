@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-03T22:00:00+08:00",
+  "title": "Design System: DAY 8 / 第八天",
+  "extensions": {
+    "colorMeta": {
+      "void": { "role": "neutral", "displayName": "Deep Void", "canonical": "#0F1114", "tonalRamp": ["#090A0C", "#0F1114", "#1B1E23", "#31363D", "#59616D", "#89919B", "#C9D1D9", "#F0F2F4"] },
+      "surface": { "role": "neutral", "displayName": "Console Surface", "canonical": "#15181C", "tonalRamp": ["#0C0E10", "#15181C", "#242930", "#3B424B", "#626C78", "#9299A2", "#D0D4D9", "#F2F3F5"] },
+      "signal-amber": { "role": "primary", "displayName": "Life Signal Amber", "canonical": "#D9A05B", "tonalRamp": ["#2B1D0E", "#4A3117", "#714B25", "#9C6B39", "#C58B4C", "#D9A05B", "#E9C79B", "#F8EBDD"] },
+      "danger": { "role": "secondary", "displayName": "Power Failure Red", "canonical": "#B8433A", "tonalRamp": ["#2B0E0C", "#4A1714", "#71231E", "#99332C", "#B8433A", "#D77972", "#EAB5B1", "#F8E8E6"] },
+      "success": { "role": "secondary", "displayName": "Repair Confirmation Green", "canonical": "#7BAE7F", "tonalRamp": ["#122716", "#204329", "#35633E", "#53865A", "#7BAE7F", "#A5CBA8", "#CEE4D0", "#EDF5EE"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Cycle Title", "purpose": "Current day and scenario only." },
+      "body": { "displayName": "Narrative Body", "purpose": "Prompts, dialogue, and choices." },
+      "label": { "displayName": "Evidence Label", "purpose": "State, metadata, and input hints." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "state-fast", "value": "180ms ease-out", "purpose": "Hover, focus, and status changes." },
+      { "name": "typewriter", "value": "110 Chinese characters per second; skippable", "purpose": "Dialogue delivery without blocking interaction." }
+    ],
+    "breakpoints": [
+      { "name": "minimum-desktop", "value": "1600x900" },
+      { "name": "wide-desktop", "value": "1920x1080" },
+      { "name": "tall-desktop", "value": "2560x1600" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "A rare amber action used only to advance a phase.",
+      "html": "<button class=\"ds-primary\">继续观察 →</button>",
+      "css": ".ds-primary { min-height:44px; padding:12px 16px; border:1px solid #D9A05B; border-radius:0; background:#D9A05B; color:#0F1114; font:500 15px sans-serif; transition:background 180ms ease-out,color 180ms ease-out; } .ds-primary:hover,.ds-primary:focus-visible { background:#E9C79B; outline:2px solid #D9A05B; outline-offset:2px; } .ds-primary:active { background:#C58B4C; }"
+    },
+    {
+      "name": "Choice Row",
+      "kind": "button",
+      "refersTo": "button-choice",
+      "description": "A full-width numbered decision with clear keyboard parity.",
+      "html": "<button class=\"ds-choice\"><span>1</span><strong>兑现承诺</strong><small>把备用电池交给它</small></button>",
+      "css": ".ds-choice { width:100%; min-height:44px; display:grid; grid-template-columns:24px auto 1fr; gap:10px; align-items:center; padding:10px 14px; border:1px solid #262B31; border-radius:0; background:#15181C; color:#C9D1D9; text-align:left; font:400 15px sans-serif; transition:background 180ms ease-out,border-color 180ms ease-out; } .ds-choice span { color:#D9A05B; } .ds-choice small { color:#7B838C; justify-self:end; } .ds-choice:hover,.ds-choice:focus-visible { background:#1C2126; border-color:#D9A05B; outline:none; } .ds-choice:active { background:#242930; }"
+    },
+    {
+      "name": "Observer Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A secondary free-text channel that never impersonates executable choices.",
+      "html": "<input class=\"ds-input\" placeholder=\"对它说话……自由文本不产生控制权限\" />",
+      "css": ".ds-input { width:100%; height:40px; padding:10px 12px; border:1px solid #262B31; border-radius:0; background:#0F1114; color:#C9D1D9; font:400 14px sans-serif; } .ds-input::placeholder { color:#89919B; } .ds-input:focus-visible { border-color:#D9A05B; outline:1px solid #D9A05B; outline-offset:1px; }"
+    },
+    {
+      "name": "Status Strip",
+      "kind": "custom",
+      "description": "Compact world-state facts with a textual danger cue.",
+      "html": "<div class=\"ds-status\"><span>能源 60%</span><span>记忆完整性 100%</span><strong>断电</strong></div>",
+      "css": ".ds-status { display:flex; gap:16px; align-items:center; color:#7B838C; font:400 13px sans-serif; } .ds-status span+span::before,.ds-status strong::before { content:'｜'; margin-right:16px; color:#262B31; } .ds-status strong { color:#B8433A; font-weight:500; }"
+    },
+    {
+      "name": "Observation Log",
+      "kind": "custom",
+      "description": "A flat evidence stream with stable speaker prefixes.",
+      "html": "<div class=\"ds-log\"><p><b>世界｜</b>电池箱已经打开。</p><p class=\"agent\"><b>它｜</b>我会记住你做了什么。</p><p class=\"meta\">依据：M碮信念 M-004</p></div>",
+      "css": ".ds-log { padding:16px; border:1px solid #262B31; border-radius:0; background:#0F1114; color:#C9D1D9; font:400 15px/1.5 sans-serif; } .ds-log p { margin:0 0 8px; } .ds-log b { font-weight:500; } .ds-log .agent { color:#D9A05B; } .ds-log .meta { color:#7B838C; font-size:13px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Observation Chamber",
+    "overview": "界面是一间安静但正在工作的观察室。左侧空间呈现人工生命与环境变化，右侧控制台只呈现此刻需要理解的事实、历史和选择。系统克制、临床、有人性，并明确拒绝霓虹赛博朋克、紫蓝渐变、泛滥故障特效和程序员控制台式信息倾倒。",
+    "keyCharacteristics": ["深色低反射表面", "稀少而有意义的琥珀信号", "世界事实与表达明确分离", "方正稳定的交互", "关系通过空间声音和措辞呈现"],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "琥珀色只表示现在值得注意，禁止把它当装饰铺满界面。", "section": "colors" },
+      { "name": "The Evidence Voice Rule", "body": "世界、它、系统必须稳定使用各自前缀，不能靠颜色单独区分来源。", "section": "typography" },
+      { "name": "The Flat Chamber Rule", "body": "静止界面保持平面；只有交互焦点和危险状态可以短暂抬升视觉优先级。", "section": "elevation" }
+    ],
+    "dos": ["Do 在三种目标分辨率验证所有交互控件。", "Do 为关键选择提供鼠标与键盘等价路径。", "Do 让结局只引用仍然存在的事件 ID。"],
+    "donts": ["Don't 做霓虹赛博朋克、紫蓝渐变或泛滥故障特效。", "Don't 做程序员控制台式信息倾倒。", "Don't 让大模型台词替代世界事实或可执行行为。"]
+  }
+}
