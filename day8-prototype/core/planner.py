@@ -88,8 +88,9 @@ def _memory_influence(ctx: ActionContext, tags: set) -> float:
 
 
 def _betrayal_push(ctx: ActionContext) -> float:
-    """失信/欺骗记忆推动条件式合作与拒绝（自我保护方向）。"""
-    rel = ctx.memory.query(tags={"失信", "欺骗"})
+    """已验证的玩家失信/欺骗推动条件式合作与拒绝。"""
+    rel = [event for event in ctx.memory.query(tags={"失信", "欺骗"})
+           if event.actor == "player" or "玩家" in event.tags]
     if not rel:
         return 0.0
     return min(1.5, sum(ev.salience for ev in rel) * 0.5)
@@ -114,7 +115,7 @@ def make_default_actions() -> List[AgentAction]:
         u += ctx.drives.survival_pressure()
         u -= 1.0 * ctx.traits.conformity
         u -= _belief_influence(ctx, "服从能减少风险", 1.0)
-        u += _memory_influence(ctx, {"失信", "欺骗", "危险"})
+        u += _betrayal_push(ctx)
         return u
     acts.append(AgentAction("拒绝", refuse, speech_template="我不执行这个指令。"))
 

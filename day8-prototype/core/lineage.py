@@ -29,6 +29,14 @@ class LineageStore:
         """最新一代的遗传信念。"""
         return self.generations[-1]["genetic_belief"] if self.generations else None
 
+    @property
+    def inherited_direction(self) -> int:
+        """最新一代对命题的方向；旧存档的命题按正向先验处理。"""
+        if not self.generations:
+            return 1
+        value = self.generations[-1].get("genetic_direction", 1)
+        return -1 if value in (-1, False, "negative", "false") else 1
+
     def extract_genetic_belief(self, beliefs: BeliefSystem) -> Optional[str]:
         """选择本局最重要（确定性最高且偏离 0.5 最远）的认知。"""
         cands = [b for b in beliefs.all() if b.certainty > 0.3 and b.context == ""]
@@ -40,23 +48,28 @@ class LineageStore:
     def record_generation(self, beliefs: BeliefSystem, final_choice: str,
                           seed: int, strategy: str) -> Optional[str]:
         prop = self.extract_genetic_belief(beliefs)
+        direction = None
+        if prop is not None:
+            direction = 1 if beliefs.get(prop).confidence >= 0.5 else -1
         self.generations.append({
             "generation": len(self.generations) + 1,
             "seed": seed,
             "strategy": strategy,
             "final_choice": final_choice,
             "genetic_belief": prop,
+            "genetic_direction": direction,
         })
         self.save()
         return prop
 
-    def apply_prior(self, beliefs: BeliefSystem, proposition: Optional[str]):
+    def apply_prior(self, beliefs: BeliefSystem, proposition: Optional[str],
+                    direction: int = 1):
         """把遗传信念作为弱先验注入新生命（不是记忆，只是一点偏见）。"""
         if not proposition:
             return
         b = beliefs.get(proposition, "")
-        b.alpha += 0.4
-        b.beta += 0.4          # 提高初始确定性，但方向保持中性偏移
-        b.evidence.append(type(b.evidence[0]) if b.evidence else
-                          __import__("core.beliefs", fromlist=["Evidence"]).Evidence(
-                              "遗传先验", 0, 0.4))
+        normalized_direction = -1 if direction < 0 else 1
+        if normalized_direction > 0:
+            b.alpha += 0.4
+        else:
+            b.beta += 0.4

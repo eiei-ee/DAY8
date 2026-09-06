@@ -52,6 +52,11 @@ namespace Day8.Core {
             float p = observedTrue ? c : 1f - c;
             return 1f - p;
         }
+        public void RetainEvidenceFor(IEnumerable<string> eventIds) {
+            var live = eventIds.ToHashSet();
+            foreach (var belief in map.Values)
+                belief.evidence.RemoveAll(e => !live.Contains(e.eventId));
+        }
         public List<Belief> All => map.Values.ToList();
         public string Dump() => string.Join("\n", All
             .OrderBy(b => b.proposition).Select(b => b.Summary()));

@@ -84,7 +84,7 @@ def _remember(mem: AgentMemoryStore, beliefs: BeliefSystem, ev: WorldEvent,
             errs.append(beliefs.prediction_error(prop, observed_true))
         pred_err = max(errs)
     m = MemoryEvent(
-        event_id=f"M-{len(mem.events) + 1:03d}",
+        event_id=mem.next_event_id(),
         day=ev.day, actor=ev.actor, action=ev.action, target=ev.target,
         context=ev.context, spoken=ev.spoken,
         expected_outcome=ev.expected_outcome, actual_outcome=ev.actual_outcome,

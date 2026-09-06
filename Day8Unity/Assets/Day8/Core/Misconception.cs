@@ -44,8 +44,13 @@ namespace Day8.Core {
             return null;
         }
 
-        /// 玩家出面纠正的效果：信任越低，纠正越费力。
-        public static float CorrectionPower(BeliefSystem beliefs) =>
-            0.8f + beliefs.Get("玩家的语言与事实一致").Confidence * 1.4f;
+        /// 玩家出面纠正的效果：信任越低，基础纠正力越弱；但明确的第一手真相
+        /// 至少会把当前这条误解推回否定侧，而不是只让数值略微下降。
+        public static float CorrectionPower(BeliefSystem beliefs) {
+            float trustScaled = 0.8f + beliefs.Get("玩家的语言与事实一致").Confidence * 1.4f;
+            var misconception = beliefs.Get(BotSteals);
+            float requiredToCorrect = misconception.alpha - misconception.beta + 0.2f;
+            return Math.Min(3f, Math.Max(trustScaled, requiredToCorrect));
+        }
     }
 }

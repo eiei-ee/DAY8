@@ -30,9 +30,22 @@ class AgentMemoryStore:
         self._counter = 0
 
     def remember(self, ev: MemoryEvent, recent_day: int) -> MemoryEvent:
+        if not ev.event_id:
+            ev.event_id = self.next_event_id()
+        elif ev.event_id.startswith("M-") and ev.event_id[2:].isdigit():
+            self._counter = max(self._counter, int(ev.event_id[2:]))
         ev.salience = compute_salience(ev, recent_day)
         self.events.append(ev)
         return ev
+
+    def next_event_id(self) -> str:
+        """分配本局单调且不复用的记忆 ID；清除后也不会撞号。"""
+        live_ids = {event.event_id for event in self.events}
+        while True:
+            self._counter += 1
+            candidate = f"M-{self._counter:03d}"
+            if candidate not in live_ids:
+                return candidate
 
     def query(self, tags: Optional[set] = None, actor: Optional[str] = None,
               include_compressed: bool = False) -> List[MemoryEvent]:
@@ -70,7 +83,7 @@ class AgentMemoryStore:
             for e in group:
                 e.compressed = True
             summary = MemoryEvent(
-                event_id=f"M-SUM-{len(self.events) + len(summaries) + 1:03d}",
+                event_id=self.next_event_id(),
                 day=group[-1].day,
                 actor=actor,
                 action=f"{action}（发生{len(group)}次，已概括）",

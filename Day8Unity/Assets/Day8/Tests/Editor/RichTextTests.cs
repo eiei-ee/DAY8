@@ -2,6 +2,7 @@ using Day8.Core;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.UI;
+using Day8.UI;
 
 namespace Day8.Tests {
 
@@ -34,6 +35,23 @@ namespace Day8.Tests {
             string rebuilt = prefix + text + suffix;
             Assert.AreEqual(line, rebuilt, "解析-重建必须无损");
             Assert.AreEqual("它｜测试台词", text);
+        }
+
+        [Test]
+        public void BeliefReport_DisclosesLiveEvidenceAndLineageTogether() {
+            var belief = new Belief {
+                proposition = "玩家会兑现承诺",
+                alpha = 2f,
+                evidence = new System.Collections.Generic.List<Evidence> {
+                    new Evidence { eventId = "M-007", dir = 1, w = 1f }
+                }
+            };
+
+            string report = GameUI.FormatBeliefForReport(
+                belief, belief.proposition, "不相信「玩家会兑现承诺」", false);
+
+            StringAssert.Contains("依据：M-007", report);
+            StringAssert.Contains("另含谱系先验：不相信", report);
         }
     }
 }

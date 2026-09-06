@@ -45,8 +45,8 @@ class TestFullGame(unittest.TestCase):
 
     def test_wipe_effects(self):
         """记忆清除必须真实删除记忆并降低完整性；高显著度记忆保留。"""
-        r = quiet_run(42, "always_betray")   # execute_secret，信任低 → 大概率被发现或执行
-        lab = quiet_run(42, "lab_obedient")  # execute_open
+        r = quiet_run(1, "always_betray")    # execute_secret，未发现后执行
+        lab = quiet_run(2, "lab_obedient")   # execute_open，部分保留
         r.Kind = None
         # 两种执行路径至少一种真实删除了记忆
         executed = [x for x in (r, lab) if getattr(x, "wipe_executed", False)]
@@ -86,6 +86,10 @@ class TestFullGame(unittest.TestCase):
             self.assertEqual(inherited_before, r1.genetic_belief)
             baseline = quiet_run(7, "always_betray")
             r2 = quiet_run(7, "always_betray", lineage=lin2)
+            prior = r2.final_report["lineage_prior"]
+            self.assertEqual(prior["proposition"], inherited_before)
+            self.assertIn(prior["direction"], ("positive", "negative"))
+            self.assertIn("谱系先验", "\n".join(r2.final_report["reasons"]))
             # 继承先验后，该信念的确定性应高于无先验的对照
             import re
             def certainty_of(run, prop):

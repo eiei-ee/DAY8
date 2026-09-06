@@ -62,7 +62,7 @@
       "name": "Observation Log",
       "kind": "custom",
       "description": "A flat evidence stream with stable speaker prefixes.",
-      "html": "<div class=\"ds-log\"><p><b>世界｜</b>电池箱已经打开。</p><p class=\"agent\"><b>它｜</b>我会记住你做了什么。</p><p class=\"meta\">依据：M碮信念 M-004</p></div>",
+      "html": "<div class=\"ds-log\"><p><b>世界｜</b>电池箱已经打开。</p><p class=\"agent\"><b>它｜</b>我会记住你做了什么。</p><p class=\"meta\">依据：记忆 M-004</p></div>",
       "css": ".ds-log { padding:16px; border:1px solid #262B31; border-radius:0; background:#0F1114; color:#C9D1D9; font:400 15px/1.5 sans-serif; } .ds-log p { margin:0 0 8px; } .ds-log b { font-weight:500; } .ds-log .agent { color:#D9A05B; } .ds-log .meta { color:#7B838C; font-size:13px; }"
     }
   ],

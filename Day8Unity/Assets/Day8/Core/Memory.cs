@@ -17,12 +17,15 @@ namespace Day8.Core {
         public string Describe() {
             var s = $"[{eventId}] 第{day}周期 {ZhActor(actor)}{action}";
             if (!string.IsNullOrEmpty(target)) s += $"（{target}）";
-            if (!string.IsNullOrEmpty(spoken)) s += $"\n    它说：{spoken}";
+            if (!string.IsNullOrEmpty(spoken)) s += $"\n    {SpokenLabel(actor)}：{spoken}";
             if (!string.IsNullOrEmpty(actual)) s += $"\n    结果：{actual}";
             return s;
         }
+        /// 引述按事件的行为者归属：记忆是它的，但话不一定是它说的。
+        static string SpokenLabel(string actor) => actor switch {
+            "player" => "你说", "agent" => "它说", "lab" => "实验室广播", _ => "原话" };
         public static string ZhActor(string a) => a switch {
-            "player" => "你", "agent" => "人工生命", "lab" => "实验室", _ => a };
+            "player" => "你", "agent" => "人工生命", "lab" => "实验室", "world" => "世界", _ => a };
     }
 
     public class AgentMemory {
@@ -31,11 +34,13 @@ namespace Day8.Core {
         const float CompressThreshold = 2.2f;
 
         public MemoryEvent Remember(MemoryEvent ev) {
-            ev.eventId = $"M-{++_counter:D3}";
+            ev.eventId = NextId();
             ev.salience = Salience(ev);
             events.Add(ev);
             return ev;
         }
+
+        string NextId() => $"M-{++_counter:D3}";
 
         static float Salience(MemoryEvent ev) {
             float s = 2f * ev.predictionError + Mathf01(ev.emotionalImpact);
@@ -66,6 +71,7 @@ namespace Day8.Core {
                 foreach (var e in g) e.compressed = true;
                 var tags = g.SelectMany(e => e.tags ?? Array.Empty<string>()).Distinct().ToArray();
                 summaries.Add(new MemoryEvent {
+                    eventId = NextId(),
                     day = g.Last().day, actor = g.Key.Split('|')[0],
                     action = $"{g.Key.Split('|')[1]}（发生{g.Count()}次，已概括）",
                     context = "夜间整合生成的概括记忆", tags = tags, compressed = false,

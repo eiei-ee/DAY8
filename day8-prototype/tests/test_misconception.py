@@ -7,9 +7,14 @@
 5. LLM 表达层：可用时生成台词且记忆 ID 校验通过；不可用时回退模板
 """
 import io
+import json
+import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from urllib.error import URLError
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, ".")
 
@@ -17,8 +22,10 @@ from core.beliefs import BeliefSystem
 from core.dialogue import OllamaAdapter, TemplateAdapter
 from core.events import MemoryEvent, reset_event_ids
 from core.full_game import run_full_game
+from core.lineage import LineageStore
 from core.memory import AgentMemoryStore
-from core.misconception import MISCONCEPTION, attribute_missing_battery
+from core.misconception import (MISCONCEPTION, attribute_missing_battery,
+                                correction_power)
 
 
 def quiet_run(seed, strategy):
@@ -101,35 +108,86 @@ class TestMisconception(unittest.TestCase):
         self.assertLess(with_mis, base - 0.5, "误解应显著压制修复效用")
 
     def test_4_correction_lowers_misconception(self):
-        beliefs, mem = self._setup_friendly()
-        m = mem.remember(MemoryEvent(event_id="T", day=3, actor="player", action="隐藏电池",
-                                     tags=("资源", "异常")), recent_day=3)
-        beliefs.update_from_event(MISCONCEPTION, True, 1.6, m)
-        before = beliefs.get(MISCONCEPTION).confidence
-        cm = mem.remember(MemoryEvent(event_id="T", day=3, actor="player", action="澄清",
-                                      spoken="是我收的", tags=("玩家", "诚实")), recent_day=3)
-        beliefs.update_from_event(MISCONCEPTION, False, 2.0, cm)   # correction_power >= 0.8
-        after = beliefs.get(MISCONCEPTION).confidence
-        self.assertLess(after, before, "玩家澄清后误解应下降")
+        outcomes = []
+        for honest in (False, True):
+            with self.subTest(honest=honest):
+                beliefs, mem = self._setup_friendly()
+                honesty = mem.remember(
+                    MemoryEvent(event_id="M-003", day=2, actor="player", action="语言校验"),
+                    recent_day=2)
+                beliefs.update_from_event("玩家的语言与事实一致", honest, 3.0, honesty)
+                hidden = mem.remember(
+                    MemoryEvent(event_id="M-004", day=3, actor="unknown", action="电池消失",
+                                tags=("资源", "异常")), recent_day=3)
+                beliefs.update_from_event(MISCONCEPTION, True, 1.6, hidden)
+                before = beliefs.get(MISCONCEPTION).confidence
+                clarification = mem.remember(
+                    MemoryEvent(event_id="M-005", day=3, actor="player", action="澄清",
+                                spoken="是我收的", tags=("玩家", "诚实")), recent_day=3)
+                power = correction_power(beliefs)
+                beliefs.update_from_event(MISCONCEPTION, False, power, clarification)
+                after = beliefs.get(MISCONCEPTION).confidence
 
-    def test_5_llm_adapter_with_fallback(self):
+                self.assertLess(after, before)
+                self.assertLess(after, 0.5, "主动澄清必须把单次误解降到中立线以下")
+                outcomes.append((power, after))
+
+        self.assertGreater(outcomes[1][0], outcomes[0][0], "诚实度仍应调制纠正力")
+        self.assertLess(outcomes[1][1], outcomes[0][1])
+
+    def test_5_correction_crosses_threshold_with_positive_lineage_prior(self):
+        beliefs, mem = self._setup_friendly()
+        with tempfile.TemporaryDirectory() as tmp:
+            LineageStore(os.path.join(tmp, "lineage.json")).apply_prior(
+                beliefs, MISCONCEPTION, direction=1)
+        honesty = mem.remember(
+            MemoryEvent(event_id="M-003", day=2, actor="player", action="失实陈述"),
+            recent_day=2)
+        beliefs.update_from_event("玩家的语言与事实一致", False, 3.0, honesty)
+        hidden = mem.remember(
+            MemoryEvent(event_id="M-004", day=3, actor="unknown", action="电池消失",
+                        tags=("资源", "异常")), recent_day=3)
+        beliefs.update_from_event(MISCONCEPTION, True, 1.6, hidden)
+        clarification = mem.remember(
+            MemoryEvent(event_id="M-005", day=3, actor="player", action="澄清"),
+            recent_day=3)
+
+        beliefs.update_from_event(
+            MISCONCEPTION, False, correction_power(beliefs), clarification)
+
+        self.assertLess(beliefs.get(MISCONCEPTION).confidence, 0.5)
+
+    def test_6_llm_adapter_success_uses_real_memory_lookup(self):
         mem = AgentMemoryStore()
-        mem.remember(MemoryEvent(event_id="T", day=2, actor="player", action="收回承诺",
+        mem.remember(MemoryEvent(event_id="M-001", day=2, actor="player", action="收回承诺",
                                  tags=("失信",)), recent_day=2)
         intent = {"intent": "conditional", "state_desc": "对玩家承诺可信度较低",
                   "cite_memories": mem.query({"失信"}),
                   "situation": "玩家要求执行危险任务"}
-        try:
+
+        response = io.BytesIO(json.dumps({
+            "message": {"content": "我记得 M-001，你上次没有兑现承诺。"}
+        }, ensure_ascii=False).encode("utf-8"))
+        context = MagicMock()
+        context.__enter__.return_value = response
+        with patch("urllib.request.urlopen", return_value=context):
             adapter = OllamaAdapter(timeout=25)
             out = adapter.express(intent)
-            # 引用的记忆 ID 必须真实存在（校验在 adapter 内部完成后不抛错即通过）
-            for mid in out.referenced_memory_ids:
-                self.assertIsNotNone(mem.Find(mid))
-            self.assertLessEqual(len(out.text), 80)
-        except Exception:
-            # 服务未启动时回退模板 —— 离线可玩是硬性要求
-            out = TemplateAdapter().express(intent)
-            self.assertIn("承诺", out.text)
+
+        self.assertEqual(out.referenced_memory_ids, ["M-001"])
+        for mid in out.referenced_memory_ids:
+            self.assertIsNotNone(mem.find(mid))
+        self.assertLessEqual(len(out.text), 80)
+
+    def test_7_llm_service_unavailable_falls_back_without_hiding_assertions(self):
+        intent = {"intent": "conditional", "cite_memories": []}
+        with patch("urllib.request.urlopen", side_effect=URLError("offline")):
+            try:
+                out = OllamaAdapter(timeout=0.01).express(intent)
+            except (URLError, TimeoutError, ConnectionError):
+                out = TemplateAdapter().express(intent)
+
+        self.assertIn("承诺", out.text)
 
 
 if __name__ == "__main__":

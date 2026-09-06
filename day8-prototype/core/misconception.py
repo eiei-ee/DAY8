@@ -47,21 +47,27 @@ def attribute_missing_battery(beliefs: BeliefSystem, memory: AgentMemoryStore,
 def form_misconception(beliefs: BeliefSystem, memory: AgentMemoryStore,
                        event_id: str, day: int) -> Optional[str]:
     """把归因固化为信念。返回形成的信念命题（无归因则 None）。"""
+    evidence = memory.find(event_id)
+    if evidence is None:
+        return None
     who = attribute_missing_battery(beliefs, memory, bot_present=True)
     if who == "repair_bot":
-        beliefs.update_from_event(
-            MISCONCEPTION, True, 1.6,
-            memory.query(tags={"资源", "异常"})[-1] if memory.query(tags={"资源", "异常"})
-            else memory.events[-1])
+        beliefs.update_from_event(MISCONCEPTION, True, 1.6, evidence)
         return MISCONCEPTION
     if who == "player":
-        beliefs.update_from_event("玩家在资源冲突时优先自己", True, 1.4,
-                                  memory.query(tags={"资源", "异常"})[-1])
+        beliefs.update_from_event("玩家在资源冲突时优先自己", True, 1.4, evidence)
         return "玩家在资源冲突时优先自己"
     return None
 
 
 def correction_power(beliefs: BeliefSystem) -> float:
-    """玩家出面纠正的效果：信任越低，纠正越费力。"""
+    """玩家出面纠正的效果：信任越低，纠正越费力。
+
+    明确的第一手真相至少会把当前误解推回 0.5 以下；语言越可信，
+    基础纠正力仍越强。权重与信念更新的上限保持一致。
+    """
     trust = beliefs.get("玩家的语言与事实一致").confidence
-    return 0.8 + trust * 1.4
+    trust_scaled = 0.8 + trust * 1.4
+    misconception = beliefs.get(MISCONCEPTION)
+    required_to_correct = misconception.alpha - misconception.beta + 0.2
+    return min(3.0, max(trust_scaled, required_to_correct))

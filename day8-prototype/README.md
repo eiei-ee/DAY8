@@ -14,7 +14,7 @@ python run_full.py --lineage 4      # 认知谱系：遗传信念跨代继承
 # 里程碑0 三实验精简版
 python run_simulation.py --seed 42 --strategy always_betray --verbose
 
-# 全部测试（17 项：复现性/分化/记忆清除/导演/谱系/对白校验）
+# 全部 63 项测试（复现性/分化/记忆清除/导演/谱系/对白校验）
 python -m unittest discover -s tests
 ```
 
@@ -25,7 +25,7 @@ python -m unittest discover -s tests
 | 1-5 | 导演按"最不确定的玩家维度"从场景池选：规则/承诺/第三方/信息冲突/稀缺（不重复） | 自适应导演 |
 | 6 | 记忆清除（"稳定化"）。是否被发现取决于实验室可信度+玩家诚实度+好奇心；发现后可选阻止/备份/假装配合 | 控制权反转；记忆真删 |
 | 7 | 隐藏出口：开门/锁死/提条件/交还选择权/上报实验室 | 尊重自主的核心证据 |
-| 8 | 断电。10 个候选行动中只选 3 个（上传记忆/开门/删记录/修机器人/带走电池…） | 有限行动点结算 |
+| 8 | 断电。10 个候选行动中只选 3 个；若它交还门控权，玩家必须作出真实最终选择 | 有限行动点结算 |
 
 结局为三维度组合（自身：逃离/上传/留下 × 对玩家：信任/遗弃/交还决定权 × 第三方：修复/放弃），
 每条报告原因引用真实记忆事件 ID。
@@ -40,7 +40,7 @@ core/
   player_model.py  玩家倾向维度（不显示给玩家）
   planner.py       特质、驱动、15 种候选行为、效用决策（带种子）
   world.py         确定性世界状态（LLM 不可修改事实）
-  dialogue.py      DialogueOutput 校验 + 模板后备 + LLM 适配器接口（离线可玩）
+  dialogue.py      DialogueOutput 校验 + 模板后备 + 独立 LLM 适配器验证
   director.py      自适应导演：按最不确定维度选实验
   lineage.py       认知谱系：每局压缩一条遗传信念给下一代
   full_game.py     七周期 + 第八天结算 + 三维度结局报告
@@ -59,20 +59,6 @@ core/
 | lab_obedient | 守信但服从实验室 |
 | ai_protector | 优先保护人工生命 |
 
-## 结构
-
-```
-core/
-  events.py        WorldEvent（世界事实）/ MemoryEvent（结构化记忆）
-  memory.py        记忆库、显著度、夜间整合压缩
-  beliefs.py       Beta 分布信念（含情境标签）
-  player_model.py  玩家倾向维度（不显示给玩家）
-  planner.py       特质、驱动、候选行为、效用决策（带种子）
-  world.py         确定性世界状态（LLM 不可修改事实）
-  simulation.py    三实验 + 断电最终事件 + 模板表达层
-  recorder.py      RunRecorder（种子+全事件日志）/ 批量模拟
-```
-
 ## 原型通过标准（tests/test_core.py）
 
 1. ✅ 兑现 vs 失信 → 最终行动分化（20 种子中 ≥15 分化；分布 5/5 vs 5/5）
@@ -82,7 +68,7 @@ core/
 5. ✅ 无 LLM 可完成（原型从不调用模型）
 6. ✅ 同种子可复现（transcript 完全一致）
 
-## 已接管的增量（感知 / 误解 / 本地 LLM）
+## 已接管的增量（感知 / 误解 / 独立 LLM 适配器）
 
 - `core/perception.py`：感知过滤。控制台后的操作默认"仅结果可见"，
   警觉度随周期与好奇度增长——后期藏匿可能被当场目击。
@@ -91,7 +77,9 @@ core/
   形成信念"维修机器人在抢夺资源"。玩家可出面纠正（纠正力受语言可信度调制）
   或利用误解（暗示机器可疑，误解加深）。
 - **误解真实改变行为**：第八天"修复维修机器人"效用减去 (误解置信度-0.5)*2.5。
-- `core/dialogue.py` OllamaAdapter：本机 qwen2.5:7b（CUDA）表达层，
-  `DAY8_LLM=1` 启用；台词中引用的记忆 ID 必须真实存在，失败自动回退模板。
-- 测试：`tests/test_misconception.py` 5 项（归因方向、误解形成率≥16/20、
-  效用压制、纠正下降、LLM 回退）。全套 22 项。
+- `core/dialogue.py` 保留 OllamaAdapter 作为独立表达层验证；台词中引用的
+  记忆 ID 必须真实存在。**Python 完整流程不调用 Ollama，始终使用可复现的
+  确定性模板；Ollama 适配器只在针对性测试或独立调用中运行。**
+- 测试：`tests/test_misconception.py` 覆盖归因方向、误解形成率、效用压制、
+  纠正确实越过误解阈值、独立 LLM 适配器成功/离线路径；`tests/test_gameplay_contract.py`
+  覆盖跨实现契约与 600 局完整流程。

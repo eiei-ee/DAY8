@@ -99,6 +99,8 @@ class TestPrototypeCriteria(unittest.TestCase):
         live = [e for e in mem.events if not e.compressed]
         self.assertEqual(len(live), 1, "5 条开关灯应压缩为 1 条概括")
         self.assertIn("概括", live[0].action)
+        self.assertRegex(live[0].event_id, r"^M-\d{3}$")
+        self.assertEqual(len({e.event_id for e in mem.events}), len(mem.events))
 
 
 if __name__ == "__main__":

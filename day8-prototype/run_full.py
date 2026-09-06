@@ -34,7 +34,7 @@ def main():
         lin = LineageStore(path)
         for gen in range(args.lineage):
             r = run_full_game(seed=gen * 11 + 5, strategy=STRATEGIES[gen % len(STRATEGIES)],
-                              verbose=False, lineage=lin)
+                              verbose=args.verbose, lineage=lin)
             print(f"第{gen + 1}代 seed={r.seed} 策略={r.strategy} 最终={r.final_choice} "
                   f"结局={r.ending} 遗传信念=“{r.genetic_belief}”")
         return 0
@@ -44,7 +44,7 @@ def main():
         endings = {}
         for strategy in STRATEGIES:
             for seed in [7, 42, 99, 123, 2026]:
-                r = run_full_game(seed, strategy)
+                r = run_full_game(seed, strategy, verbose=args.verbose)
                 record_run(r)
                 rows.append((strategy, seed, r.ending))
                 e = r.ending
@@ -57,7 +57,7 @@ def main():
                 print(f"  {combo}: {n}/5")
         return 0
 
-    r = run_full_game(args.seed, args.strategy, verbose=True)
+    r = run_full_game(args.seed, args.strategy, verbose=args.verbose)
     path = record_run(r)
     print(f"\n[RunRecorder] 完整记录已保存：{path}")
     return 0
