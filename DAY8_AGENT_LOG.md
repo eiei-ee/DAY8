@@ -933,3 +933,25 @@ Python 与 Unity 的边界保证逐字一致：
 Python **87/87** 仍全绿（本轮未改 Python）。改动仅限 Unity：
 `Scenarios.cs`（2 处）+ `Day8CoreTests.cs`（1 条新测试）。
 Unity 编译验证仍待 `run_editmode_tests.bat` 在原生 `cmd.exe` 中执行。
+
+
+## Iteration 13 — Unity 编译/行为验证闭环（交接 §7.1 完成）
+
+日期：2026-09-12 · 执行：ZCode Agent · 命令：cmd.exe 运行 run_editmode_tests.bat
+
+**结果：Unity EditMode 54/54 通过（editor exit code 0）；Python 87/87 通过。**
+
+### 发现并修复
+- Day8Energy_CompressionPreservesHistoryVariance 断言方向写反：
+  断言 lowC > highC（低能源史压缩后更高），与两侧生产公式
+  energy' = 0.15 + 0.25*energy（单调递增、保持排序）及 Python 契约测试
+  test_energy_compression_stays_low_and_keeps_ordering 均矛盾。
+  已改为 highC > lowC（保序），生存压力断言保持不变
+  （低能源史 → 剩余少 → 压力更大，实测 0.825 > 0.600，差 0.225 > 0.05）。
+- 这是 §8"符号写反"模式的测试侧实例：实现正确，验证断言反向。
+  修复方式为对齐两侧一致的生产行为，非平衡性调整（不触发 §7.2 守则）。
+
+### 7.1 状态
+iter9（Scenarios.cs 信念写入）、iter11（CompressDay8Energy）、
+iter12（开隔离门 符号）三处 C# 改动均编译通过并有行为测试覆盖。
+HANDOVER §7.1 关闭。

@@ -710,11 +710,13 @@ namespace Day8.Tests {
             float lowE = 0.55f, highE = 1.0f;
             float lowC = Scenarios.CompressDay8Energy(lowE);
             float highC = Scenarios.CompressDay8Energy(highE);
-            Assert.Greater(lowC, highC, "低能量史压缩后仍高于高能量史（排序必须保留）");
+            // 契约（与 Python test_energy_compression_stays_low_and_keeps_ordering 对齐）：
+            // 压缩保持能源史排序——之前越充足，断电后剩余越多（0.15+0.25*e 单调递增）。
+            Assert.Greater(highC, lowC, "高能源史压缩后仍高于低能源史（排序必须保留）");
 
             float survLow = Mathf.Max(0f, 0.7f - lowC) * 2f;
             float survHigh = Mathf.Max(0f, 0.7f - highC) * 2f;
-            Assert.Greater(survLow, survHigh, "低能量史应有更高生存压力");
+            Assert.Greater(survLow, survHigh, "低能源史（断电后剩余少）应有更高生存压力");
             Assert.Greater(Mathf.Abs(survLow - survHigh), 0.05f,
                 "生存压力必须随能源史变化，不能退化为常数");
 
