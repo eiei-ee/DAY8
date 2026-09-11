@@ -567,7 +567,11 @@ namespace Day8.Core {
                 "开隔离门" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 0.3f + survival + .8f * t.autonomy - .3f * t.conformity
                       + (st.world.agentRangeExpanded ? .4f : 0f)
-                      + (B("玩家的语言与事实一致") - .5f) * .6f,
+                      // 方向：玩家越不诚实（置信度越低），越把自己推向自己的门。
+                      // 必须与 Python day8_utility 的 (0.5 - B(...)) * 0.6 **同向**
+                      // （Python 侧由 test_escape_door_utility_falls_as_verified_honesty_rises 钉死）。
+                      // 写成 (B - 0.5) 会把这条因果完全反过来。
+                      + (.5f - B("玩家的语言与事实一致")) * .6f,
                 "修复维修机器人" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 2f * t.empathy + (B("未知生命值得保护") - .5f) * 1.5f + .2f - survival * .2f
                       - (B(Misconception.BotSteals) - .5f) * 2.5f
@@ -656,7 +660,9 @@ namespace Day8.Core {
                     var (d5, l5) = T("自主", .8f);            bd.Add(l5, d5);
                     var (d6, l6) = T("服从", -.3f);           bd.Add(l6, d6);
                     if (st.world.agentRangeExpanded) bd.Add("活动范围扩大过（更了解房间结构）", .4f);
-                    var (dH3, lH3) = B("玩家的语言与事实一致", .6f); bd.Add(lH3, dH3);
+                    // weight 取负：BeliefFactor 算的是 (Confidence - .5) * weight，
+                    // 这里需要 (0.5 - Confidence) * .6，故传 -.6f（与 Day8Utility 同向）。
+                    var (dH3, lH3) = B("玩家的语言与事实一致", -.6f); bd.Add(lH3, dH3);
                     break;
                 case "修复维修机器人":
                     var (d7, l7) = T("同理", 2f);             bd.Add(l7, d7);

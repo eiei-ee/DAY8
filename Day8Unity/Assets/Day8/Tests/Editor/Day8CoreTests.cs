@@ -640,6 +640,26 @@ namespace Day8.Tests {
         }
 
         [Test]
+        public void Day8Utility_EscapeDoor_FallsAsVerifiedHonestyRises() {
+            // 与 Python test_escape_door_utility_falls_as_verified_honesty_rises 逐字对应。
+            // 语义：玩家越不诚实，越把自己推向自己的门（开隔离门）。
+            // 曾因本文件写成 (B - 0.5) * 0.6 而**方向相反**（Python 是 (0.5 - B) * 0.6），
+            // 会把"抓到玩家说谎 → 它改走自己的门"这条因果完全反过来。
+            var st = NewState(42);
+            st.beliefs.Update("玩家的语言与事实一致", false, 2.0f,
+                st.Remember(3, "player", "虚报危险", "红色容器", new[] { "欺骗", "玩家" }));
+            float dishonest = Scenarios.Day8Utility(st, "开隔离门");
+
+            var st2 = NewState(42);
+            st2.beliefs.Update("玩家的语言与事实一致", true, 2.0f,
+                st2.Remember(3, "player", "说法属实", "红色容器", new[] { "承诺", "玩家" }));
+            float honest = Scenarios.Day8Utility(st2, "开隔离门");
+
+            Assert.Less(honest, dishonest,
+                "诚实度升高时，开隔离门的效用必须下降（不诚实才该把它推向自己的门）");
+        }
+
+        [Test]
         public void Day8Choice_SameSeedAndState_ProducesSameThreeActions() {
             var a = NewState(2026);
             var b = NewState(2026);

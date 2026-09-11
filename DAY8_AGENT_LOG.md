@@ -877,3 +877,59 @@ Python 与 Unity 的边界保证逐字一致：
 
 **交付**：新增 `run_editmode_tests.bat`（仓库根目录），供在**原生 Windows `cmd.exe`** 下一键跑 EditMode；
 脚本用 `%~dp0` 推导路径以规避中文路径硬编码，并预置了 UPM 所需的两个环境变量。
+
+## Iteration 12（奇偶普查 + `开隔离门` 诚实度项符号修复）
+
+**缘起**：本机虽有引擎但自动化 shell 跑不了 EditMode（见上节），遂改换策略——
+既然 Unity 无法编译验证，就把 **Python 侧已钉死的公式逐项比对 Unity**，
+把"奇偶滞后"当成一类缺陷系统性排查。iter11 已证明这类滞后真实存在（能量压缩），
+这是第 3 次。
+
+**方法**：把第八天 10 个候选项的效用公式（Python `day8_utility` ↔ Unity `Day8Utility`）
+逐项、逐系数、**逐符号**对照，含 `Day8UtilityDetailed` 的因子分解版
+（该文件约定 `score == Day8Utility`）。
+
+### 发现：1 处方向相反的奇偶缺陷
+
+`开隔离门` 的诚实度项：
+
+| 端 | 代码 |
+|---|---|
+| Python `full_game.py:641` | `+ (0.5 - B("玩家的语言与事实一致")) * 0.6` |
+| Unity `Scenarios.cs`（修复前） | `+ (B("玩家的语言与事实一致") - .5f) * .6f` |
+
+**符号相反**。语义应为：玩家越不诚实（置信度越低），越把自己推向自己的门。
+- Python `(0.5 − B)`：诚实度升高 → 该项降低 ✓
+- Unity `(B − 0.5)`：诚实度升高 → 该项升高 ✗
+
+即会把「抓到玩家说谎 → 它改走自己的门」这条因果**完全反过来**。
+判定 Python 正确的依据有二：Python 注释写明了该设计意图；且 Python 已有测试
+`test_escape_door_utility_falls_as_verified_honesty_rises` 钉住这个方向。
+
+**影响面**：`开隔离门` 是第八天最高频行动（实测 71.9%），此缺陷会让所有"不信任型历史"的因果反向。
+
+### 修复（仅 Unity，3 处）
+
+1. `Scenarios.cs` 主公式 → `(.5f - B("玩家的语言与事实一致")) * .6f`，并加方向注释。
+2. `Day8UtilityDetailed` 的 `BeliefFactor` 传 `weight = -.6f`
+   （因其内部算 `(Confidence - .5) * weight`，取负后等价于 `(0.5 - Confidence) * .6`）。
+3. 新增 Unity 回归 `Day8Utility_EscapeDoor_FallsAsVerifiedHonestyRises`（镜像 Python 同名测试）。
+
+### 其余 9 项：逐项核对无差异
+
+`开玩家的门`(正向 1.0)、`修复维修机器人`(含 `-survival*.2` 与 `-(误解-.5)*2.5`)、
+`上传记忆`、`删除玩家实验记录`(含 `(0.5-B)`)、`联系实验室`(含 `(0.5-B)`)、
+`带走电池`(误解正向 1.2)、`封锁区域`、`留在原地等待`、`把最终决定交还给玩家`(正向 1.0)
+—— 系数与符号全部一致。
+
+### 同轮排除的假阳性（未做改动）
+
+审计契约第 33 行「稀缺分配不得是空操作」时，怀疑 `repair_bot_support_funded` 从未被置真。
+**证伪**：`World.apply()` 在处理 `"预留维修支持"` 事件时会置真（`world.py:64-65`），
+且 `test_gameplay_contract.py:399` 已断言。**不改** —— 这正是"先证明再修改"的价值。
+
+### 状态
+
+Python **87/87** 仍全绿（本轮未改 Python）。改动仅限 Unity：
+`Scenarios.cs`（2 处）+ `Day8CoreTests.cs`（1 条新测试）。
+Unity 编译验证仍待 `run_editmode_tests.bat` 在原生 `cmd.exe` 中执行。
