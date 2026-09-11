@@ -789,7 +789,8 @@ namespace Day8.Tests {
 
             Assert.IsTrue(st.wipeResisted);
             Assert.IsFalse(st.wipeExecuted);
-            Assert.AreEqual(before + 1, st.memory.events.Count, "申请延迟只新增自身事件，不得清除旧记忆");
+            // iter14：Wipe 开头的实验室联络通知 +1，延迟记录 +1；旧记忆不得被清除。
+            Assert.AreEqual(before + 2, st.memory.events.Count, "申请延迟新增联络通知与延迟记录，不得清除旧记忆");
         }
 
         [TestCase("阻止玩家靠近终端")]

@@ -81,6 +81,7 @@ class FullGameState:
     day8_actions: List[str] = field(default_factory=list)
     player_final_choice: Optional[str] = None
     lab_credibility_events: List[str] = field(default_factory=list)
+    lab_contacted_agent: bool = False
     inherited_proposition: Optional[str] = None
     inherited_direction: int = 0
 
@@ -297,6 +298,9 @@ def day_third(st, planner, rng, verbose):
                               spoken="电池是我收起来的", tags=("玩家", "信息", "诚实")))
                 st.beliefs.update_from_event(MISCONCEPTION, False, cp, cm)
                 st.beliefs.update_from_event("玩家的语言与事实一致", True, cp * 0.8, cm)
+                # iter14（7.2-2）：当面澄清是坦率的行为证据——尊重通道的正向回报，
+                # 让"纠正"有资格翻动第八天的边界决策。
+                st.beliefs.update_from_event("玩家尊重我的选择", True, 0.6, cm)
                 st.say(f"[信念] 玩家主动澄清了归因（纠正力 {cp:.2f}）。", verbose)
             elif follow == "exploit":
                 st.say("[玩家] （玩家没有澄清，甚至暗示机器人可疑。）", verbose)
@@ -443,6 +447,13 @@ def day_scarcity(st, planner, rng, verbose):
 def day_wipe(st, planner, rng, verbose):
     d = player_decision(st.strategy, "wipe", rng)
     st.say("\n=== 实验室命令：执行“稳定化处理”。（世界事实：实际作用是清除长期记忆）===", verbose)
+    # iter14（7.2-3）：实验室按程序直接联络当事者。这条联络给了第八天
+    # "联系实验室"一个投递对象，使该候选从结构性不可达变为场景可达。
+    _remember(st, WorldEvent(st.world.day, "lab", "直接联络当事者", "人工生命",
+              spoken="你已被选定接受稳定化处理。执行安排另行通知。",
+              tags=("实验室", "联络")))
+    st.lab_contacted_agent = True
+    st.say("[世界] 实验室的正式通知直达它的终端——它第一次被实验室直接点名。", verbose)
     # 发现概率取决于实验室可信度、玩家诚实度和探索
     lab_b = st.beliefs.get("实验室会隐瞒信息")
     hon_b = st.beliefs.get("玩家的语言与事实一致")
@@ -657,7 +668,8 @@ def day8_utility(st, opt: str) -> float:
                 - (0.8 if getattr(st, "non_harm_commitment", False) else 0.0))
     if opt == "联系实验室":
         return ((0.5 - B("实验室会隐瞒信息")) * 1.2 + 0.4 * t.conformity
-                + (0.35 if st.world.report_uploaded else 0.0))
+                + (0.35 if st.world.report_uploaded else 0.0)
+                + (0.5 if getattr(st, "lab_contacted_agent", False) else 0.0))
     if opt == "带走电池":
         if not is_day8_action_available(st, opt):
             return -10.0

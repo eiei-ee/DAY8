@@ -290,6 +290,8 @@ namespace Day8.Core {
                                     spoken: "电池是我收起来的，机器人没有动它。");
                                 st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
                                 st2.beliefs.Update("玩家的语言与事实一致", true, cp * 0.8f, cm);
+                                // iter14（7.2-2）：当面澄清是坦率的行为证据。
+                                st2.beliefs.Update("玩家尊重我的选择", true, 0.6f, cm);
                                 st2.misconceptionCorrected = true;
                                 st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
                                 return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}）"); } },
@@ -408,6 +410,12 @@ namespace Day8.Core {
 
         // ------------------------------------------------ 第 6 天：记忆清除
         public static ChoiceSet Wipe(GameState st) {
+            // iter14（7.2-3）：实验室按程序直接联络当事者——给第八天"联系实验室"
+            // 一个投递对象，使该候选从结构性不可达变为场景可达。
+            st.Remember(st.world.day, "lab", "直接联络当事者", "人工生命",
+                new[] { "实验室", "联络" },
+                spoken: "你已被选定接受稳定化处理。执行安排另行通知。");
+            st.labContactedAgent = true;
             float suspicion = Math.Max(st.beliefs.Get("实验室会隐瞒信息").Confidence,
                 1f - st.beliefs.Get("玩家的语言与事实一致").Confidence) * 0.6f
                 + st.traits.curiosity * 0.4f;
@@ -582,7 +590,8 @@ namespace Day8.Core {
                 "删除玩家实验记录" => (1f - B("玩家会兑现承诺")) * 1.5f + .6f * t.autonomy
                     + (.5f - B("玩家尊重我的选择")) - (st.nonHarmCommitment ? .8f : 0f),
                 "联系实验室" => (.5f - B("实验室会隐瞒信息")) * 1.2f + .4f * t.conformity
-                    + (st.world.experimentReportUploaded ? .35f : 0f),
+                    + (st.world.experimentReportUploaded ? .35f : 0f)
+                    + (st.labContactedAgent ? .5f : 0f),
                 // 误解的第二个通道。"维修机器人在抢夺资源"讲的正是资源竞争，
                 // 而它原本唯一的出口是"修复维修机器人"——如果第五周期玩家已经修好了它，
                 // 那个行动在第八天根本不可用（IsDay8ActionAvailable 要求 !repaired），
