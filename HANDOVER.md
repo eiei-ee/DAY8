@@ -31,8 +31,8 @@
 | Python 测试 | **87 / 87 通过**（约 2.3 秒） |
 | 契约不变量 | 批量模拟无违规 |
 
-**一处未闭合**：`Day8Unity/` 中 iter9 / iter11 / iter12 的几处 C# 改动**尚未经编译器验证**
-（Python 侧逻辑与回归均已就位）。见 §7。
+**无未闭合项**：iter9 / iter11 / iter12 的 C# 改动已经 cmd.exe 运行
+run_editmode_tests.bat 完成编译与行为验证（iter13，见 DAY8_AGENT_LOG.md）。
 
 ---
 
@@ -156,7 +156,7 @@ python -m analysis.tools.decision_consequence --seeds 100
 
 ## 7. 待办
 
-### 7.1 需要一次编译/运行验证（唯一的技术性未闭合项）
+### 7.1 已完成（iter13 验证轮，2026-09-12）
 `Day8Unity/` 中 iter9（`Scenarios.cs` 信念写入）、iter11（能量压缩）、
 iter12（`开隔离门` 符号）三处 C# 改动**尚未被编译器验证**。
 仓库根目录有 `run_editmode_tests.bat`，在**原生 Windows `cmd.exe`** 中运行即可
