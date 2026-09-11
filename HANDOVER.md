@@ -216,6 +216,10 @@ iter12（`开隔离门` 符号）三处 C# 改动**尚未被编译器验证**。
   `git update-ref` 重新锚定到可读基线 → `git read-tree <baseline>`（**只重建索引，
   绝不用 `reset --hard`**）→ 折叠提交。**缺失对象若从未 push，历史不可恢复，只能保内容。**
 - 严禁执行 `DAY 8 > Rebuild Main Scene`（除非确认主场景损坏）。
+- **Android 构建必须在纯 ASCII 路径下进行**（中文项目路径会报
+  `UnityException: Invalid project path`）。流程：镜像 `Day8Unity` 到
+  `C:\Day8AndroidBuild` → batch `BuildAndroid` → 取回 `Build/Android/Day8.apk`。
+  （`BuildAndroid` 方法 2026-09-12 曾因资产镜像被覆盖丢失一次，已恢复进 git。）
 
 **机制坑**
 - 信念是 Beta 分布，从未被写入的命题 `confidence` 停在先验 **0.5**，
