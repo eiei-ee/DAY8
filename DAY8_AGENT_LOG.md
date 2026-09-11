@@ -636,6 +636,44 @@ PROCESSOR_ARCHITECTURE="AMD64" NUMBER_OF_PROCESSORS="20" \
 **下一步**：在能正常跑 Unity 的机器上执行"可用的调用方式"里的命令，
 确认 52 个 EditMode 测试仍然全绿。
 
+---
+
+## Iteration 10（验证轮，无代码修改）
+
+**Baseline**
+`8647c36`（git 恢复后、折叠提交之上的树），Python 测试 87/87。
+本轮不做任何机制修改，只做**复测确认**——证明恢复后的树与 iter9 结论一致、且没有引入新缺陷。
+
+**Measurements（在已提交树上跑）**
+1. `belief_channels.py --seeds 100`（1900 局）：
+   - `服从能减少风险` 写入 **1694**（iter9 前为 0）→ 修复确实落地、通道激活。
+   - `记忆是我的一部分` 仍是唯一"只读不写"孤儿（读 370 / 写 0），与 iter9 一致
+     （已知设计判断，列入回归白名单 `KNOWN_ORPHANS`）。
+   - "只写不读" **0 条** → 无死写通道。其余 14 条命题读写齐全。
+2. `reachability_census.py --seeds 200`（3800 局）：
+   - `接受` 在 `D6-公开清除` **11/1000 (1.1%)** 可达（iter9 前 0/1766）→ 契约 "Accept the wipe" 仍可达。
+   - 仍只有 `观察而不行动`（3 个决策点）结构性不可达，赤字 +0.19~+2.47、零擦肩
+     → 按设计（无信念通道的"什么也不做"选项），非缺陷。
+   - 门控槽噪声敏感度 16.1%（同 iter9，近平局由噪声决定，非缺陷）。
+3. `distribution_report.py --seeds 100`：
+   - 余弦坍缩仍为 **4 对**（`always_betray ~ resource_self` 1.0000 等），与 iter9 完全相同。
+   - 后果权重：玩家历史 **26.7%** / agent 性格 **57.1%** —— **逐字不变**，因果链未被修复扰动。
+
+**结论**：恢复后的树与 iter9 完全一致，无任何新机制缺陷。本轮 **KEEP，不改动代码**。
+
+**Unity 验证（环境修复 + 重试，结果待回填）**
+- 本轮首次真正发起 Unity EditMode（用文档配方），但**不再挂起、改为崩溃**：
+  `HandleProjectAlreadyOpenInAnotherInstance` → crash handler 拦截，无 test-results.xml，`error CS`=0。
+- 根因：iter9 遗留的 `Tuanjie.exe` 后台进程（PID 19448）+ 过期 `Day8Unity/Temp/TuanjieLockfile`
+  仍占用工程，新进程判定"已有实例在运行"。
+- 修复：已 `taskkill /F /IM Tuanjie.exe` 清掉残留进程并删除 `TuanjieLockfile`；
+  进程与锁均已确认清除（`tasklist` 无 Tuanjie、`TuanjieLockfile` 不存在）。
+- 已用同一配方重新发起 EditMode（`test-results-iter10b.xml`，`timeout 240` 兜底），结果待回填。
+  若沙箱导入 IPC 仍挂起（iter7/iter8 同因），则 `Scenarios.cs` 的 iter9 改动仍以
+  "逐行镜像 + Python 87/87"作为可用证据，需在能跑 Unity 的机器上补跑 52 测试。
+
+**Decision** KEEP（验证轮；发现并修复了一个会影响下次验证的环境缺陷：残留实例导致崩溃）
+
 ### 本夜改动（21 + 2 = 23 个 commit，均为本地）
 
 > ⚠️ **这些 commit 已在本会话后续因 `.git` 对象库损坏而丢失**（见文末「收尾（续）」）。
