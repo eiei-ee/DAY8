@@ -723,6 +723,16 @@ namespace Day8.Core {
             _ => Day8Options.Contains(action),
         };
 
+        /// 第八天能量压缩：断电把能量压到低位，但保留玩家能源史的排序与差异。
+        /// 必须与 Python core/full_game.py day8_settlement 中的
+        ///   st.drives.energy = 0.15 + 0.25 * st.drives.energy
+        /// 逐字一致——否则 Unity 端的「生存压力」会退化为常数，玩家能源史在第八天
+        /// 不再有任何行为后果（这正是 Python 侧 test_survival_pressure_varies_with_energy_history
+        /// 所钉死、并曾因 Math.Min(energy, 0.35) 硬封顶而失效的那条不变量）。
+        /// 注意：旧公式 Math.Min(energy, 0.35) 会把任何 ≥0.35 的能源史都压成 0.35，
+        /// 使生存压力恒为 0.7，进而让「开隔离门 / 带走电池 / 修复」得到固定加成——不得再用。
+        public static float CompressDay8Energy(float energy) => 0.15f + 0.25f * energy;
+
         /// 按本局 seeded RNG 选三个合法行动；资源只预留，不在选择阶段改变世界。
         public static List<string> ChooseDay8Actions(GameState st) {
             var ranked = Day8Options

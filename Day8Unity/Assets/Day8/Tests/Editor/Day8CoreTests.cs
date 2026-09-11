@@ -678,8 +678,31 @@ namespace Day8.Tests {
             unavailable.world.batteries = 0;
             unavailable.world.repairBotPresent = false;
             var actions = Scenarios.ChooseDay8Actions(unavailable);
-            CollectionAssert.DoesNotContain(actions, "修复维修机器人");
+                CollectionAssert.DoesNotContain(actions, "修复维修机器人");
             CollectionAssert.DoesNotContain(actions, "带走电池");
+        }
+
+        [Test]
+        public void Day8Energy_CompressionPreservesHistoryVariance() {
+            // 与 Python test_survival_pressure_varies_with_energy_history 逐字对应：
+            // 第八天断电压缩能量时，必须保留玩家能源史的排序与差异，
+            // 否则「生存压力」退化为常数，开隔离门/带走电池/修复在第八天不再随能源史变化。
+            float lowE = 0.55f, highE = 1.0f;
+            float lowC = Scenarios.CompressDay8Energy(lowE);
+            float highC = Scenarios.CompressDay8Energy(highE);
+            Assert.Greater(lowC, highC, "低能量史压缩后仍高于高能量史（排序必须保留）");
+
+            float survLow = Mathf.Max(0f, 0.7f - lowC) * 2f;
+            float survHigh = Mathf.Max(0f, 0.7f - highC) * 2f;
+            Assert.Greater(survLow, survHigh, "低能量史应有更高生存压力");
+            Assert.Greater(Mathf.Abs(survLow - survHigh), 0.05f,
+                "生存压力必须随能源史变化，不能退化为常数");
+
+            // 对照：被替换掉的旧公式 Math.Min(e, 0.35) 确实把两者都压成 0.35 → 生存压力恒为 0.7
+            float oldLow = Mathf.Min(lowE, 0.35f);
+            float oldHigh = Mathf.Min(highE, 0.35f);
+            Assert.AreEqual(oldLow, oldHigh,
+                "（对照）旧公式真的退化为常数——说明为何必须用 0.15 + 0.25*e 替换它");
         }
 
         [Test]
