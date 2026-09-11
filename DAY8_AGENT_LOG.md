@@ -791,3 +791,38 @@ Python 与 Unity 的边界保证逐字一致：
 2. 误解"纠正"在观感上是否够重（`带走电池` 1.014 vs `封锁区域` 1.003，差 0.011，上轮第 2 点）。
 3. 谨慎型 agent 行动贫乏（`观察而不行动` 三场景 0 次；`联系实验室` 18/19 档案从未被选，上轮第 3 点）。
 4. **本轮新增**：`接受` 在 D6-发现真相 永远不可达（被 `备份记忆` 理性压过），但 "Accept the wipe" 结局在 D6-公开清除 仍可达成（13/1250）——设计判断：发现真相场景是否应允许 agent 接受清除，或仅公共清除场景允许。
+
+## 附：Unity 编辑器 ILPP 卡死的系统排查（2026-09-12，更正旧结论）
+
+用户确认本机装有团结引擎（`D:\unity\tuanjie\2022.3.62t8`），遂尝试在本机跑 Unity EditMode
+以闭合"iter9/iter11 两处 C# 改动从未被编译器验证"这一最大缺口。结果：卡死，并借此**证伪了此前的错误归因**。
+
+**症状**：停在 `Application.AssetDatabase Initial Refresh Start`，日志此后 5 分钟 0 字节增长，
+无测试结果。成功时（11:32 那次）该行之后会立刻出现 ILPP 监听 `localhost:80` 与 `bee_backend.exe`。
+
+**逐项排除（均有实测证据）**：
+
+| 假设 | 结论 |
+|---|---|
+| 沙箱阻止 | ❌ **证伪**：`dangerouslyDisableSandbox` 跑同样卡在同一行（旧结论"沙箱配置变更"是错的） |
+| 端口 80 被占 | ❌ netstat 显示空闲；ILPP Runner 手动可监听 80 |
+| .NET 运行时缺失 | ❌ 手动跑 `Unity.ILPP.Runner.exe` 正常启动 |
+| ArtifactDB / 导入库损坏 | ❌ 删除 `ArtifactDB`/`Artifacts`/`SourceAssetDB` 重建后仍卡 |
+| `SystemRoot` 大小写 | ❌ 清掉大写 `SYSTEMROOT`、补规范 `SystemRoot` 后仍卡 |
+| 残留进程 / 锁 | ❌ 无 Tuanjie 进程、无 `TuanjieLockfile` |
+| 授权 Licensing | ❌ 成功与失败日志握手均为 200 |
+
+**两个关键新证据**：
+1. `Unity.ILPP.Runner.exe` **无参数会抛异常退出**：
+   `ILPP runner should at least have one argument (named pipe or unix socket)`
+   → 正常运行 Unity 必须传命名管道参数拉起它；卡死时 Unity 根本没走到这一步。
+2. 不补环境变量时会得到**另一种明确失败**（与卡死不同的故障模式）：
+   `Failed to start the Tuanjie Package Manager local server process`（返回码 1）
+   → 证实 `ProgramData` + `ALLUSERSPROFILE` 必补；补上后 UPM 能起，但仍卡在 ILPP，两个故障点独立。
+
+**结论**：本自动化 shell（Git Bash shim）无法让编辑器拉起 ILPP 宿主子进程——**不是仓库代码问题**。
+另注：`Library/ScriptAssemblies/Assembly-CSharp-Editor.dll` 时间戳停在 11:29，此后从未更新，
+印证 12:13 起脚本编译就再没成功过。
+
+**交付**：新增 `run_editmode_tests.bat`（仓库根目录），供在**原生 Windows `cmd.exe`** 下一键跑 EditMode；
+脚本用 `%~dp0` 推导路径以规避中文路径硬编码，并预置了 UPM 所需的两个环境变量。
