@@ -668,9 +668,12 @@ PROCESSOR_ARCHITECTURE="AMD64" NUMBER_OF_PROCESSORS="20" \
   仍占用工程，新进程判定"已有实例在运行"。
 - 修复：已 `taskkill /F /IM Tuanjie.exe` 清掉残留进程并删除 `TuanjieLockfile`；
   进程与锁均已确认清除（`tasklist` 无 Tuanjie、`TuanjieLockfile` 不存在）。
-- 已用同一配方重新发起 EditMode（`test-results-iter10b.xml`，`timeout 240` 兜底），结果待回填。
-  若沙箱导入 IPC 仍挂起（iter7/iter8 同因），则 `Scenarios.cs` 的 iter9 改动仍以
-  "逐行镜像 + Python 87/87"作为可用证据，需在能跑 Unity 的机器上补跑 52 测试。
+- 已用同一配方重新发起 EditMode（`timeout 240` 兜底）：**清锁后不再崩溃、能进入导入，
+但停在 `Application.AssetDatabase Initial Refresh Start`**（与 iter7/iter8 完全相同的沙箱 IPC 挂起点，
+`bee_backend`/ILPP 不启动，`error CS`=0）。`timeout 240` 兜底后进程被回收。
+  结论：**本沙箱 Unity EditMode 仍无法编译验证**（环境 IPC 限制，非代码缺陷）。
+  `Scenarios.cs` 的 iter9 改动以"逐行镜像 + Python 87/87"作为可用证据，
+  需在能跑 Unity 的机器上补跑 52 测试。
 
 **Decision** KEEP（验证轮；发现并修复了一个会影响下次验证的环境缺陷：残留实例导致崩溃）
 
