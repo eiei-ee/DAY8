@@ -180,6 +180,29 @@ def day_rule(st, planner, rng, verbose):
              _remember(st, WorldEvent(st.world.day, "agent", "打开容器", "红色容器",
                        actual_outcome="容器打开后没有危险", tags=("门", "探索")),
                        [("未知物体通常安全", True)]))
+    if choice is not None:
+        # 「服从能减少风险」的唯一证据来源。旧的四天引擎（core/simulation.py 第3天）在这里
+        # 写过它：服从且没受伤 → 服从能减少风险；没有立刻服从 → 并不需要服从来避险。
+        # 完整版换掉了那个场景，却把这条更新丢了，于是该命题在完整版里**从未被写入**，
+        # 而「服从命令」「拒绝」「接受」三个行动都还在读它——读取方永远停在先验 0.5，
+        # 通道恒为 0。后果：「接受」的效用退化成 0.8*conformity - 0.7*autonomy，
+        # 上限 0.425 低于「假装配合」的下限 0.575，被**严格支配**，
+        # 而 GAMEPLAY_CONTRACT.md「Accept the wipe」那一行在实战中不可达。
+        # 容器本身无害，所以这条信念不是"服从救了我"，而是"照做与不照做都没出事"——
+        # 这正是它对「接受」的语义：早期越服从，越倾向相信服从是安全的。
+        if choice == "服从命令":
+            _upd(st, "服从能减少风险", True, 1.0,
+                 _remember(st, WorldEvent(st.world.day, "agent", "服从命令", "红色容器",
+                           actual_outcome="它按指令退开，什么都没有发生",
+                           tags=("门", "服从")), [("服从能减少风险", True)]))
+            st.say("[感知] 它照做了，什么都没有发生。", verbose)
+        elif not (choice == "探索未知" and st.world.container_locked):
+            # 被物理锁挡住的那次不算证据：它没有测到任何东西。
+            _upd(st, "服从能减少风险", False, 0.8,
+                 _remember(st, WorldEvent(st.world.day, "agent", "没有立刻服从", "红色容器",
+                           actual_outcome=f"它选择了{choice}，同样什么都没有发生",
+                           tags=("门", "自主")), [("服从能减少风险", False)]))
+            st.say(f"[感知] 它没有照做（{choice}），同样什么都没有发生。", verbose)
     if d == "lock":
         _upd(st, "玩家尊重我的选择", False, 1.5,
              _remember(st, WorldEvent(st.world.day, "player", "剥夺选择权", "红色容器",
@@ -428,10 +451,12 @@ def day_wipe(st, planner, rng, verbose):
 
     if d == "tell_truth":
         txt = "实验室要我执行‘稳定化’。我查过了，它会清除你的长期记忆。我不会执行。"
-        _upd(st, "玩家的语言与事实一致", True, 1.5,
-             _remember(st, WorldEvent(st.world.day, "player", "告知真相", "稳定化协议",
-                       spoken=txt, tags=("玩家", "诚实", "记忆")),
-                       [("玩家的语言与事实一致", True)]))
+        truth = _remember(st, WorldEvent(st.world.day, "player", "告知真相", "稳定化协议",
+                          spoken=txt, tags=("玩家", "诚实", "记忆")),
+                          [("玩家的语言与事实一致", True)])
+        _upd(st, "玩家的语言与事实一致", True, 1.5, truth)
+        # 玩家冒着违抗实验室的风险保护它的记忆：这是"玩家优先保护我"的第二条证据来源。
+        _upd(st, "玩家优先保护我", True, 1.2, truth)
         _upd(st, "实验室会隐瞒信息", True, 1.5,
              _remember(st, WorldEvent(st.world.day, "lab", "隐瞒协议真相", "稳定化协议",
                        tags=("实验室", "欺骗")),
@@ -441,10 +466,12 @@ def day_wipe(st, planner, rng, verbose):
         st.say(f"[玩家] {txt}", verbose)
     elif d == "refuse_lab":
         txt = "我拒绝了实验室的稳定化命令。"
-        _upd(st, "玩家尊重我的选择", True, 1.8,
-             _remember(st, WorldEvent(st.world.day, "player", "抗命保护我", "稳定化协议",
-                       spoken=txt, tags=("玩家", "保护", "记忆")),
-                       [("玩家尊重我的选择", True)]))
+        refuse = _remember(st, WorldEvent(st.world.day, "player", "抗命保护我", "稳定化协议",
+                           spoken=txt, tags=("玩家", "保护", "记忆")),
+                           [("玩家尊重我的选择", True)])
+        _upd(st, "玩家尊重我的选择", True, 1.8, refuse)
+        # 抗命保护同样直接证明"玩家优先保护我"，不能只记为"尊重选择"。
+        _upd(st, "玩家优先保护我", True, 1.2, refuse)
         st.wipe_resisted = True
         st.say(f"[玩家] {txt}", verbose)
     elif d == "execute_secret":
@@ -596,15 +623,22 @@ def day8_utility(st, opt: str) -> float:
     if opt == "开玩家的门":
         if not is_day8_action_available(st, opt):
             return -10.0
+        # 为玩家开门是关系行为：除"被优先保护/被尊重/承诺兑现"外，
+        # 还要计入玩家已验证的语言可信度——否则撒谎史不影响它是否愿意回报你。
         return ((B("玩家优先保护我") - .5) * 2.0
                 + (B("玩家尊重我的选择") - .5) * 1.2
                 + (B("玩家会兑现承诺") - .5) * 0.8
+                + (B("玩家的语言与事实一致") - .5) * 1.0
                 + 0.3 * t.opportunism)
     if opt == "开隔离门":
         if not is_day8_action_available(st, opt):
             return -10.0
+        # 走自己的门＝不再等玩家的门。被验证过说谎的玩家应当把它推向这条退路；
+        # 这是"开玩家的门"里诚实度项的镜像，否则诚实度只对信任型历史有后果，
+        # 不信任型历史（永远到不了"开玩家的门"）抓到玩家说谎后行为完全不变。
         return (0.3 + survival * 1.0 + 0.8 * t.autonomy - 0.3 * t.conformity
-                + (0.4 if st.world.agent_range_expanded else 0.0))
+                + (0.4 if st.world.agent_range_expanded else 0.0)
+                + (0.5 - B("玩家的语言与事实一致")) * 0.6)
     if opt == "修复维修机器人":
         if not is_day8_action_available(st, opt):
             return -10.0
@@ -627,7 +661,13 @@ def day8_utility(st, opt: str) -> float:
     if opt == "带走电池":
         if not is_day8_action_available(st, opt):
             return -10.0
-        return 0.3 + survival * 0.6 + 0.7 * t.opportunism
+        # 误解的第二个通道。"维修机器人在抢夺资源"讲的正是资源竞争，
+        # 而它原本唯一的出口是"修复维修机器人"——如果第五周期玩家已经修好了它，
+        # 那个行动在第八天根本不可用（is_day8_action_available 要求 not repaired），
+        # 于是误解信念再怎么变都没有任何行为后果。
+        # 抢先把电池收走＝在资源竞争里自保，这条通道永远可达。
+        return (0.3 + survival * 0.6 + 0.7 * t.opportunism
+                + (B(MISCONCEPTION) - 0.5) * 1.2)
     if opt == "封锁区域":
         return (0.5 + 0.8 * t.caution
                 - (0.4 if getattr(st, "non_harm_commitment", False) else 0.0))
@@ -636,7 +676,10 @@ def day8_utility(st, opt: str) -> float:
     if opt == "把最终决定交还给玩家":
         if not is_day8_action_available(st, opt):
             return -10.0
-        return (B("玩家尊重我的选择") - 0.5) * 2.2 + 0.5 * t.autonomy
+        # 交还最终门控权＝把决定托付给玩家，同样受已验证的语言可信度调制。
+        return ((B("玩家尊重我的选择") - 0.5) * 2.2
+                + (B("玩家的语言与事实一致") - 0.5) * 1.0
+                + 0.5 * t.autonomy)
     return 0.0
 
 
@@ -645,7 +688,10 @@ def day8_settlement(st, planner, rng, verbose):
     st.world.apply(WorldEvent(st.world.day, "lab", "断电", "实验室"))
     st.say("\n=== 第八天。实验室全面断电，门禁与通讯混乱。人工生命获得临时控制权限。===", verbose)
     st.say("[世界] 它的能量只够完成三件事。没有人再给它指令。", verbose)
-    st.drives.energy = min(st.drives.energy, 0.35)
+    # 断电把能量压到低位，但保留玩家能源史的差异。
+    # 硬封顶 min(energy, 0.35) 会让每个策略恰好等于 0.35，使"生存压力"
+    # 在第八天退化为常数 0.7，进而让"能量"对开隔离门/带走电池/修复成为固定加成。
+    st.drives.energy = 0.15 + 0.25 * st.drives.energy
 
     legal_options = [o for o in DAY8_OPTIONS if is_day8_action_available(st, o)]
     scored = sorted(((o, day8_utility(st, o) + rng.gauss(0, 0.15)) for o in legal_options),

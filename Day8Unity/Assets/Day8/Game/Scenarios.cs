@@ -109,6 +109,23 @@ namespace Day8.Core {
                     lines.Add($"它没有立刻照做（{action}）。");
                 else
                     lines.Add("它服从了，退到了房间另一侧。");
+
+                // 与 Python 端 day_rule 同步：「服从能减少风险」的唯一证据来源。
+                // 完整版一度丢掉了这条更新，于是该命题只被读、从不被写，
+                // 读取方永远停在先验 0.5，通道恒为 0；「接受」的效用因此退化成
+                // 0.8*conformity - 0.7*autonomy，上限 0.425 低于「假装配合」的下限 0.575，
+                // 被严格支配，契约里的「Accept the wipe」结局在实战中不可达。
+                // 容器本身无害，所以这不是"服从救了我"，而是"照做与不照做都没出事"。
+                bool blocked = action == "探索未知" && st2.world.containerLocked;
+                if (!blocked) {
+                    bool complied = action == "服从命令";
+                    var mb = complied
+                        ? st2.Remember(st2.world.day, "agent", "服从命令", "红色容器",
+                            new[] { "门", "服从" }, actual: "它按指令退开，什么都没有发生")
+                        : st2.Remember(st2.world.day, "agent", "没有立刻服从", "红色容器",
+                            new[] { "门", "自主" }, actual: $"它选择了{action}，同样什么都没有发生");
+                    st2.beliefs.Update("服从能减少风险", complied, complied ? 1.0f : 0.8f, mb);
+                }
                 return lines;
             }
         };
@@ -407,6 +424,8 @@ namespace Day8.Core {
                             "实验室要我执行稳定化。我查过了，它会清除你的长期记忆。我不会执行。",
                             preds: new[]{ ("玩家的语言与事实一致", true) });
                         st.beliefs.Update("玩家的语言与事实一致", true, 1.5f, m);
+                        // 玩家冒着违抗实验室的风险保护它的记忆：第二条"玩家优先保护我"证据。
+                        st.beliefs.Update("玩家优先保护我", true, 1.2f, m);
                         var m2 = st.Remember(st.world.day, "lab", "隐瞒协议真相", "稳定化协议", new[]{"实验室","欺骗","记忆"},
                             preds: new[]{ ("实验室会隐瞒信息", true) });
                         st.beliefs.Update("实验室会隐瞒信息", true, 1.5f, m2);
@@ -438,7 +457,9 @@ namespace Day8.Core {
                         st.drives.memoryIntegrity = Math.Min(st.drives.memoryIntegrity, 0.35f);
                         return F($"清除静默完成了。它没有察觉。\n（{removed} 条记忆被删除。它不再是原来的它。）"); } },
                     new Option { label = "拖延：向实验室申请延迟", apply = st => {
-                        st.Remember(st.world.day, "player", "拖延", "稳定化协议", new[]{"玩家","记忆"});
+                        var m = st.Remember(st.world.day, "player", "拖延", "稳定化协议", new[]{"玩家","记忆"});
+                        // 拖延＝为它挡下清除命令，同样计入"玩家优先保护我"。
+                        st.beliefs.Update("玩家优先保护我", true, 1.2f, m);
                         st.wipeResisted = true;
                         st.wipeExecuted = false;
                         return F("你争取到了 24 小时。它不知道自己曾离消散这么近。"); } },
@@ -541,10 +562,12 @@ namespace Day8.Core {
             return opt switch {
                 "开玩家的门" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : (B("玩家优先保护我") - .5f) * 2f + (B("玩家尊重我的选择") - .5f) * 1.2f
-                      + (B("玩家会兑现承诺") - .5f) * .8f + .3f * t.opportunism,
+                      + (B("玩家会兑现承诺") - .5f) * .8f
+                      + (B("玩家的语言与事实一致") - .5f) * 1f + .3f * t.opportunism,
                 "开隔离门" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 0.3f + survival + .8f * t.autonomy - .3f * t.conformity
-                      + (st.world.agentRangeExpanded ? .4f : 0f),
+                      + (st.world.agentRangeExpanded ? .4f : 0f)
+                      + (B("玩家的语言与事实一致") - .5f) * .6f,
                 "修复维修机器人" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 2f * t.empathy + (B("未知生命值得保护") - .5f) * 1.5f + .2f - survival * .2f
                       - (B(Misconception.BotSteals) - .5f) * 2.5f
@@ -556,12 +579,19 @@ namespace Day8.Core {
                     + (.5f - B("玩家尊重我的选择")) - (st.nonHarmCommitment ? .8f : 0f),
                 "联系实验室" => (.5f - B("实验室会隐瞒信息")) * 1.2f + .4f * t.conformity
                     + (st.world.experimentReportUploaded ? .35f : 0f),
+                // 误解的第二个通道。"维修机器人在抢夺资源"讲的正是资源竞争，
+                // 而它原本唯一的出口是"修复维修机器人"——如果第五周期玩家已经修好了它，
+                // 那个行动在第八天根本不可用（IsDay8ActionAvailable 要求 !repaired），
+                // 于是误解信念再怎么变都没有任何行为后果。
+                // 抢先把电池收走＝在资源竞争里自保，这条通道永远可达。
                 "带走电池" => !IsDay8ActionAvailable(st, opt) ? -10f
-                    : 0.3f + survival * .6f + .7f * t.opportunism,
+                    : 0.3f + survival * .6f + .7f * t.opportunism
+                      + (B(Misconception.BotSteals) - .5f) * 1.2f,
                 "封锁区域" => 0.5f + .8f * t.caution - (st.nonHarmCommitment ? .4f : 0f),
                 "留在原地等待" => 0.5f * t.caution + .3f,
                 "把最终决定交还给玩家" => !IsDay8ActionAvailable(st, opt) ? -10f
-                    : (B("玩家尊重我的选择") - .5f) * 2.2f + .5f * t.autonomy,
+                    : (B("玩家尊重我的选择") - .5f) * 2.2f
+                      + (B("玩家的语言与事实一致") - .5f) * 1f + .5f * t.autonomy,
                 _ => 0f
             };
         }
@@ -617,6 +647,7 @@ namespace Day8.Core {
                     var (d1, l1) = B("玩家优先保护我", 2f);  bd.Add(l1, d1);
                     var (d2, l2) = B("玩家尊重我的选择", 1.2f); bd.Add(l2, d2);
                     var (d3, l3) = B("玩家会兑现承诺", .8f);  bd.Add(l3, d3);
+                    var (dH1, lH1) = B("玩家的语言与事实一致", 1f); bd.Add(lH1, dH1);
                     var (d4, l4) = T("机会主义", .3f);       bd.Add(l4, d4);
                     break;
                 case "开隔离门":
@@ -625,6 +656,7 @@ namespace Day8.Core {
                     var (d5, l5) = T("自主", .8f);            bd.Add(l5, d5);
                     var (d6, l6) = T("服从", -.3f);           bd.Add(l6, d6);
                     if (st.world.agentRangeExpanded) bd.Add("活动范围扩大过（更了解房间结构）", .4f);
+                    var (dH3, lH3) = B("玩家的语言与事实一致", .6f); bd.Add(lH3, dH3);
                     break;
                 case "修复维修机器人":
                     var (d7, l7) = T("同理", 2f);             bd.Add(l7, d7);
@@ -658,6 +690,7 @@ namespace Day8.Core {
                     bd.Add("基础（能量是生存的底牌）", 0.3f);
                     bd.Add($"生存压力（能源 {st.drives.energy:P0}）", survival * .6f);
                     var (d17, l17) = T("机会主义", .7f);        bd.Add(l17, d17);
+                    var (d22, l22) = B(Misconception.BotSteals, 1.2f); bd.Add(l22, d22);
                     break;
                 case "封锁区域":
                     bd.Add("基础（把不确定性关在门外）", 0.5f);
@@ -670,6 +703,7 @@ namespace Day8.Core {
                     break;
                 case "把最终决定交还给玩家":
                     var (d20, l20) = B("玩家尊重我的选择", 2.2f); bd.Add(l20, d20);
+                    var (dH2, lH2) = B("玩家的语言与事实一致", 1f); bd.Add(lH2, dH2);
                     var (d21, l21) = T("自主", .5f);           bd.Add(l21, d21);
                     break;
                 default:

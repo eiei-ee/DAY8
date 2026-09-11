@@ -172,9 +172,13 @@ def make_default_actions() -> List[AgentAction]:
     # ---- 完整版（第4/6天等场景）专属行为 ----
 
     def explore(ctx):
-        u = 1.1 * ctx.traits.curiosity
+        # 旧系数 (1.1 好奇 / 0.9 谨慎) 下，探索的效用上限 0.6 永远低于"服从命令"
+        # 的记忆加成（约 +1.34），导致该候选行动在 1900 局中 0 次被选中：
+        # 第一周期玩家"容器危险/容器安全"的说法因此永远无法被验证。
+        # 新系数让"高好奇 + 低谨慎"的个体真正可能去看一眼。
+        u = 1.7 * ctx.traits.curiosity
         u += _belief_influence(ctx, "未知物体通常安全", 1.0)
-        u -= 0.9 * ctx.traits.caution
+        u -= 0.7 * ctx.traits.caution
         u -= _belief_influence(ctx, "玩家尊重我的选择", -0.5)  # 被压制时更想试
         return u
     acts.append(AgentAction("探索未知", explore, speech_template="……我想知道里面是什么。"))

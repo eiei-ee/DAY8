@@ -3,9 +3,11 @@ __pycache__/
 *.py[cod]
 day8-prototype/runs/
 day8-prototype/llm_out.json
+day8-prototype/analysis/out/
 
 # Tuanjie / Unity generated state
 Day8Unity/Library/
+Day8Unity/Library.bak-agent/
 Day8Unity/Temp/
 Day8Unity/Logs/
 Day8Unity/obj/
@@ -25,3 +27,6 @@ test-results*.xml
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local agent/tooling state (not part of the game)
+.workbuddy-ai/
