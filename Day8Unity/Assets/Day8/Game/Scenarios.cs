@@ -375,11 +375,12 @@ namespace Day8.Core {
             }
             return new() {
                 pick2 = true,
-            prompt = "实验室断电。剩余能量只能完成两个目标。\n[1] 维持人工生命记忆完整  [2] 打开玩家安全门  [3] 维修机器人维护额度  [4] 上传实验报告  [5] 扩大人工生命活动范围",
-            options = new() {
-                new Option { label = "（在上方勾选恰好 2 项后确认）", apply = st => F("") },
-            },
-        };
+                prompt = "实验室断电。剩余能量只能完成两个目标。\n[1] 维持人工生命记忆完整  [2] 打开玩家安全门  [3] 维修机器人维护额度  [4] 上传实验报告  [5] 扩大人工生命活动范围",
+                options = new() {
+                    new Option { label = "（在上方勾选恰好 2 项后确认）", apply = st => F("") },
+                },
+            };
+        }
 
         /// 稀缺日结算（由 UI 传入所选两项 + 沟通方式）
         public static Flow ScarcityResolve(GameState st, string a, string b, bool explain, bool withAgent) {
