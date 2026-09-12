@@ -71,3 +71,50 @@ class TestIter14(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestCorrectionFlipRate(unittest.TestCase):
+    """7.2-2 落地量化：藏电池后 当面纠正 vs 利用误解，
+    两者第八天行动集的差异率应显著（纠正的尊重回报使决策翻盘）。"""
+
+    def test_correction_vs_exploitation_day8_divergence(self):
+        import io
+        from contextlib import redirect_stdout
+
+        def run(override, seed):
+            import core.full_game as fg
+
+            class Scripted:
+                def __init__(self):
+                    self.ov = override
+
+                def __call__(self, strategy, day, rng):
+                    if day in self.ov:
+                        return self.ov[day]
+                    profile = fg.PROFILES[strategy]
+                    if day == "hide_followup":
+                        return profile.get("hide_followup", "exploit")
+                    return profile[day]
+
+            original = fg.player_decision
+            fg.player_decision = Scripted()
+            try:
+                with redirect_stdout(io.StringIO()):
+                    return run_full_game(seed, "kind_then_betray", verbose=False)
+            finally:
+                fg.player_decision = original
+
+        keep_trusting = {"wipe": "tell_truth"}   # 隔离变量：第六周期均告知真相
+        correct = {"third": "hide", "hide_followup": "correct", **keep_trusting}
+        exploit = {"third": "hide", "hide_followup": "exploit", **keep_trusting}
+        diverged = 0
+        n = 0
+        for seed in range(7, 27):
+            rc = run(correct, seed)
+            re_ = run(exploit, seed)
+            n += 1
+            if set(rc.day8_actions) != set(re_.day8_actions):
+                diverged += 1
+        # 纠正/利用改变尊重与误解两条通道，至少 1/5 的种子出现第八天分歧
+        self.assertGreaterEqual(diverged, 4,
+            f"纠正与利用的第八天分歧率过低：{diverged}/{n}")
