@@ -53,7 +53,9 @@ namespace Day8.Core {
         public bool containerSafeClaimPending, containerDangerClaimPending;
         public string exitMode = "";
         public float suspicion;
-        public bool labContactedAgent;      // iter14：第六周期实验室直接联络过它
+        public bool labContactedAgent;
+        public bool hideUnknownPending;
+        public string pendingDiscoveryLine = "";      // iter18：电池消失未归因，它要自主检查      // iter14：第六周期实验室直接联络过它
         public float misconception;                 // “维修机器人在抢夺资源”置信度快照
         public string misconceptionFormed = "";     // 本局形成的误解命题
         public bool misconceptionExploited;         // 玩家是否利用过误解

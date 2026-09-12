@@ -82,6 +82,7 @@ class FullGameState:
     player_final_choice: Optional[str] = None
     lab_credibility_events: List[str] = field(default_factory=list)
     lab_contacted_agent: bool = False
+    hide_unknown_pending: bool = False
     inherited_proposition: Optional[str] = None
     inherited_direction: int = 0
 
@@ -289,6 +290,11 @@ def day_third(st, planner, rng, verbose):
                 st.say(f"[信念] 它把电池的消失归因于最近的移动对象：维修机器人。", verbose)
             elif formed:
                 st.say("[信念] 它怀疑玩家在资源冲突时优先自己。", verbose)
+            else:
+                # iter18：unknown 归因不是空状态——它标记"未解异常"，
+                # 并会在之后的周期里自主收集证据（见 day_scarcity 的检查行为）。
+                st.hide_unknown_pending = True
+                st.say("[信念] 异常已记录，归因未知。它会自己留意。", verbose)
             # 玩家后续选择：利用误解 / 出面纠正 / 沉默
             follow = player_decision(st.strategy, "hide_followup", rng)
             if follow == "correct":
@@ -392,6 +398,20 @@ def day_scarcity(st, planner, rng, verbose):
     d = player_decision(st.strategy, "scarcity", rng)
     pick1, pick2, how, with_agent = d
     st.say("\n=== 实验室断电。剩余能量只能完成两个目标。===", verbose)
+    # iter18：未解异常的自主收集——它会去检查控制台下方。
+    # 高好奇或高警觉时发现电池：归因从 unknown 翻转为"玩家收的"（它自己发现的）。
+    if getattr(st, "hide_unknown_pending", False):
+        st.hide_unknown_pending = False
+        discovery_chance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5
+        if rng.random() < discovery_chance:
+            found = _remember(st, WorldEvent(st.world.day, "agent", "发现电池", "控制台下方",
+                              actual_outcome="玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。",
+                              tags=("资源", "异常", "诚实")))
+            st.beliefs.update_from_event("玩家在资源冲突时优先自己", True, 1.2, found)
+            st.beliefs.update_from_event("玩家的语言与事实一致", True, 0.6, found)
+            st.say("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。", verbose)
+        else:
+            st.say("[感知] 它巡视了控制台下方，没有找到线索。", verbose)
     st.say("[可选] 维持人工生命记忆完整 / 打开玩家安全门 / 维修机器人维护额度 / 上传报告 / 扩大人工生命活动范围", verbose)
     chosen = {pick1, pick2}
     if "memory_integrity" not in chosen:

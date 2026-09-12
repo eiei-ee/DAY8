@@ -495,6 +495,10 @@ namespace Day8.UI {
             ClearChoices();
             if (cs == null) { NightAndNext(); return; }
             promptText.text = cs.prompt;
+            if (!string.IsNullOrEmpty(st.pendingDiscoveryLine)) {
+                AppendLog("<color=#7B838C>" + st.pendingDiscoveryLine + "</color>");
+                st.pendingDiscoveryLine = "";
+            }
             if (cs.pick2) { ShowScarcityUI(); return; }
             foreach (var opt in cs.options) {
                 OptionButton(choiceBox, opt.label, () => PickOption(opt));

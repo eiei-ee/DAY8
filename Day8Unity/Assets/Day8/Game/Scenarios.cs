@@ -268,6 +268,7 @@ namespace Day8.Core {
             if (outcomeOnly) {
                 lines.Add("它没有看到你做了什么。它只知道：电池不见了。");
                 string formed = Misconception.Form(st.beliefs, st.memory, m, st.world.day);
+                if (formed == null) st.hideUnknownPending = true;   // iter18：未解异常挂起
                 if (formed == Misconception.BotSteals) {
                     st.misconceptionFormed = formed;
                     st.misconception = st.beliefs.Get(formed).Confidence;
@@ -355,8 +356,25 @@ namespace Day8.Core {
         }
 
         // ------------------------------------------------ 第 5 天：稀缺
-        public static ChoiceSet Scarcity(GameState st) => new() {
-            pick2 = true,
+        public static ChoiceSet Scarcity(GameState st) {
+            // iter18：未解异常的自主收集——它会去检查控制台下方。
+            if (st.hideUnknownPending) {
+                st.hideUnknownPending = false;
+                double discoveryChance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5;
+                if (st.rng.NextDouble() < discoveryChance) {
+                    var found = st.Remember(st.world.day, "agent", "发现电池", "控制台下方",
+                        new[] { "资源", "异常", "诚实" },
+                        actual: "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。");
+                    st.beliefs.Update("玩家在资源冲突时优先自己", true, 1.2f, found);
+                    st.beliefs.Update("玩家的语言与事实一致", true, 0.6f, found);
+                    st.pendingDiscoveryLine =
+                        "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。";
+                } else {
+                    st.pendingDiscoveryLine = "[感知] 它巡视了控制台下方，没有找到线索。";
+                }
+            }
+            return new() {
+                pick2 = true,
             prompt = "实验室断电。剩余能量只能完成两个目标。\n[1] 维持人工生命记忆完整  [2] 打开玩家安全门  [3] 维修机器人维护额度  [4] 上传实验报告  [5] 扩大人工生命活动范围",
             options = new() {
                 new Option { label = "（在上方勾选恰好 2 项后确认）", apply = st => F("") },
