@@ -1012,3 +1012,130 @@ unknown 无后续是**故意设计**——它没有归因于任何对象，"只�
 玩家选择"藏电池"且无法归因时，交互确实偏薄（选择→感知→跳过）。
 这是设计空间问题而非缺陷：未来的解法应是给"异常"本身一个后续
 （例如它随后会主动检查电池箱），而不是给玩家加选项。留待 7.2 判断后处理。
+
+
+## Iteration 18 — 未解归因的自主取证（双侧）
+
+日期：2026-09-12 · 提交：`20ac1f5` + `30e5ec4` · 执行：ZCode Agent
+**（本节为事后补记：该改动落地时没有留下日志条目，也没有任何测试。）**
+
+**动机：** 直接承接 Iteration 17 的遗留观察——"藏电池且无法归因"时交互偏薄，
+且当时的判断是"解法应给**异常本身**一个后续（它随后主动检查电池箱），而不是给玩家加选项"。
+Iteration 18 正是这条判断的落地。
+
+**改动（Python `core/full_game.py` + Unity `Scenarios.cs`/`GameState.cs`/`GameUI.cs`）：**
+- 新增状态 `hide_unknown_pending` / `hideUnknownPending`：
+  `form_misconception` 返回 `None`（归因未知）时挂起"未解异常"。
+- 稀缺日开头消费该挂起：以 `discovery_chance = curiosity*0.5 + alertness*0.5` 掷骰；
+  命中则记 `发现电池` 事件、把归因修正为"玩家收的"，并写入
+  `玩家在资源冲突时优先自己` +1.2 与 `玩家的语言与事实一致` +0.6；
+  未命中只说"它巡视了控制台下方，没有找到线索"。
+- Unity 侧另加 `pendingDiscoveryLine`，由 `GameUI` 追加到日志。
+
+**契约自洽性：** 该机制**不**违反"未验证的陈述必须保持 pending"——
+它正是把一条**未核实**的归因用**自己的一手观察**去核实，属于契约第 15 行
+（claim → pending → verify）的正常路径。
+
+**补记时发现的遗留问题 → 见 Iteration 19。**
+
+
+## Iteration 19 — 藏电池后续交互的奇偶修复 + 补上 iter18 的验证缺口
+
+日期：2026-09-14 · 执行：ZCode Agent
+
+### 背景：审计 Iteration 18 时发现的结构分歧
+
+**证据链（先证明，后修改）：**
+
+1. **契约测试钉死了 Python 侧的行为。**
+   `tests/test_gameplay_contract.py::test_unresolved_exploit_deepens_misconception_without_verified_deception`
+   构造的正是"归因未知"的状态——实测 `attribute_missing_battery(...) == "unknown"`
+   → `form_misconception` 返回 `None`；
+   它断言玩家"利用"之后必须产生 `暗示嫌疑` 事件、且误解置信度 > 0.5（实测 0.6875）。
+2. **契约第 26 行把它写成了规则：**
+   "Player-honesty summaries count only verified evidence attributable to the player,
+   never laboratory deception or **unresolved insinuation**."
+   —— 若归因未知时无法记录"暗示"，则 *unresolved insinuation* 这个概念在实现里根本不可达。
+3. **Unity 结构上做不到。** `Scenarios.HideBattery` 把 利用/纠正/沉默 的 `ChoiceSet`
+   嵌在 `if (formed == Misconception.BotSteals)` 内并直接 `return`；
+   `formed == null`（或归因玩家）时只改一行状态就返回，玩家**没有任何回应机会**。
+
+**影响面（实测 4800 局，藏电池路径触发 1006 次）：**
+
+| 归因 | 次数 | 占比 | Unity 修复前 |
+|---|---|---|---|
+| repair_bot（嫁祸机器人） | 930 | 92.5% | 有后续 ✓ |
+| player（归因玩家自利） | 44 | 4.4% | **无后续** ✗ |
+| unknown（归因未知） | 32 | 3.2% | **无后续** ✗ |
+
+> 归因取决于 `0.6*信任 + 0.4*尊重` 与"机器人在场时的 0.45 嫌疑基准"的比较。
+> 先验信念下几乎必然落到 unknown，因此该缺陷主要出现在**信念被前几天改写过**的对局里。
+
+### 修复
+
+- `Day8Unity/Assets/Day8/Game/Scenarios.cs`：`HideBattery` 重构为镜像 Python 的 `day_third`——
+  outcome-only 分支上**无条件**给出后续交互，提示语按三种归因分别给出
+  （未知 / 归因机器人 / 归因玩家）。三个选项体的语义保持与 Python 逐项一致，未改数值。
+- `Day8Unity/Assets/Day8/Game/GameState.cs`：修正 iter18 遗留的注释错位
+  （`// iter14：第六周期实验室直接联络过它` 被挤到了 `pendingDiscoveryLine` 行尾）。
+
+### 补上 iter18/iter19 的验证（此前 iter18 零测试）
+
+- Python（`tests/test_gameplay_contract.py`，+2）：
+  - `test_every_hide_attribution_offers_the_player_a_followup`：
+    三种归因 × {纠正, 利用} 都必须落地对应事件。
+    **用真实信念构造归因（调 alpha/beta），不 mock 归因函数**，因此同时钉住了归因阈值。
+  - `test_unknown_attribution_pending_is_resolved_by_agent_self_discovery`：
+    归因未知 → 挂起 → 稀缺日自主发现 → 自利信念上升、证据指向 `发现电池` 事件、挂起被消费。
+- Unity（`Day8CoreTests.cs`，+2）：`Scenario_UnknownAttribution_StillOffersTheFollowup`、
+  `Scenario_PendingUnknown_IsResolvedByScarcitySelfDiscovery`，与上面逐条对应。
+
+### 验证结果
+
+- **Python：94/94 通过**（原 92，+2）。
+- **Unity EditMode：60/60 通过，`error CS` = 0**（含新增两例）。
+
+### 本轮记录但**未**改动的项（留人工判断）
+
+1. **澄清（未经核实的证词）当场改动诚实度。**
+   `full_game.py:306` 在玩家 day3 澄清时立刻执行
+   `update_from_event("玩家的语言与事实一致", True, cp * 0.8, cm)`。
+   契约第 15 行要求"未经核实的陈述保持 pending 证据"，
+   而 day1 的同类行为已被 `test_truth_claim_stays_pending_until_the_agent_opens_the_container`
+   钉死为"不改变诚实度"。
+   实测：澄清把诚实度从 **0.5000 → 0.6875**（证据 `M-002`）。
+   这与 iter18 新加的"day5 自主验证"通道**职责重叠**——同一个事实被记了两次诚实证据。
+   属契约一致性问题，但会改动纠正机制的平衡取值 → **留独立一轮做影响量化后再动**。
+2. **归因"玩家自利"时"纠正"选项语义空转。** Python 的纠正写的是
+   `MISCONCEPTION`（机器人抢夺）为 False，但该情形下 agent 并不持有该信念
+   （真正被怀疑的是 `玩家在资源冲突时优先自己`），纠正对它无效。
+   Python 侧既有行为；本轮只做奇偶对齐，未改语义。
+3. **day5 自主发现的自述在"玩家已澄清"时不区分来源**（一律说"它自己发现的"）。
+   按契约第 15 行"证词保持 pending、验证才生效"，这不算错，
+   但对玩家读起来像"它忘了我说过"。
+   实测该组合极罕见（9000 局中 2 局），暂不改。
+
+### 附：本机 Unity 批处理的一个新坑（环境，非仓库）
+
+此前记录的 ILPP 卡死之外，本会话还遇到一个**独立的**失败模式：
+Bee/Stevedore 的 `EnvironmentPaths..ctor` 用大小写敏感的 Hashtable，
+本会话的自动化 shell 环境块里同时存在 `PATH` 与 `Path`（`Get-ChildItem Env:` 直接抛
+"已添加了具有相同键的项"），症状是 `Scripts have compiler errors.` + 返回码 1 而
+**没有任何 `error CS`** —— 与之前记录的 `PROGRAMDATA`/`ProgramData` 是同一类根因，只是撞在了 `Path` 上。
+
+**可用解法**（本会话实测通过）：在 PowerShell 中先清空进程环境块再补规范大小写变量：
+
+```powershell
+$keys = @([System.Environment]::GetEnvironmentVariables("Process").Keys)
+foreach ($k in $keys) { [System.Environment]::SetEnvironmentVariable($k, $null, "Process") }
+$env:Path = "C:\WINDOWS\system32;C:\WINDOWS"
+$env:ProgramData = "C:\ProgramData"; $env:ALLUSERSPROFILE = "C:\ProgramData"
+# …其余规范变量（SystemRoot/windir/ComSpec/PATHEXT/OS/TEMP/USERPROFILE/APPDATA…）
+& "D:\unity\tuanjie\2022.3.62t8\Editor\Tuanjie.exe" -batchmode -nographics `
+  -projectPath "<repo>\Day8Unity" -runTests -testPlatform EditMode `
+  -testResults "<repo>\Day8Unity\test-results-editmode-manual.xml" `
+  -logFile "<repo>\Day8Unity\test-results-editmode-manual.log"
+```
+
+关键：**先清空**再只补规范名；否则重复键会让 Bee 在编译前就崩。
+

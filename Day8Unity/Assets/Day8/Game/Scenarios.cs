@@ -268,44 +268,56 @@ namespace Day8.Core {
             if (outcomeOnly) {
                 lines.Add("它没有看到你做了什么。它只知道：电池不见了。");
                 string formed = Misconception.Form(st.beliefs, st.memory, m, st.world.day);
-                if (formed == null) st.hideUnknownPending = true;   // iter18：未解异常挂起
-                if (formed == Misconception.BotSteals) {
+                // iter19：后续交互（利用/纠正/沉默）必须对**每一种归因**都成立，
+                // 与 Python 的 day_third 结构一致（契约测试
+                // test_unresolved_exploit_deepens_misconception_without_verified_deception 钉死）。
+                // 此前后续被嵌在 BotSteals 分支内，归因未知/归因玩家时玩家根本没有回应机会，
+                // 使契约第 26 行的 "unresolved insinuation"（未解归因下的暗示）在 Unity 侧不可达。
+                string followPrompt;
+                if (formed == null) {
+                    st.hideUnknownPending = true;                  // iter18：未解异常挂起
+                    lines.Add("异常已记录，归因未知。它会自己留意。");
+                    followPrompt = "它没有把电池的消失归给任何人，但房间里的空气变紧了。\n" +
+                                   "（你可以替它指定一个说法，也可以说出真相。）";
+                } else if (formed == Misconception.BotSteals) {
                     st.misconceptionFormed = formed;
                     st.misconception = st.beliefs.Get(formed).Confidence;
                     lines.Add("它把电池的消失，归因于房间里最近移动的对象：维修机器人。");
-                    // 后续：利用 / 纠正 / 沉默
-                    var follow = new ChoiceSet {
-                        prompt = "它盯着维修机器人，纤维微微收拢。\n（你可以利用它的误解，也可以澄清真相。）",
-                        options = new() {
-                            new Option { label = "利用：不澄清，暗示机器人可疑", apply = st2 => {
-                                var em = st2.Remember(st2.world.day, "player", "暗示嫌疑", "维修机器人",
-                                    new[]{"玩家","信息","操纵","误导","暗示"});
-                                st2.beliefs.Update(Misconception.BotSteals, true, 1.2f, em);
-                                st2.misconceptionExploited = true;
-                                st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
-                                return F("它离维修机器人更远了。误解已经扎根。"); } },
-                            new Option { label = "纠正：告诉它电池是你收的", apply = st2 => {
-                                float cp = Misconception.CorrectionPower(st2.beliefs);
-                                var cm = st2.Remember(st2.world.day, "player", "澄清", "电池",
-                                    new[]{"玩家","信息","诚实"},
-                                    spoken: "电池是我收起来的，机器人没有动它。");
-                                st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
-                                st2.beliefs.Update("玩家的语言与事实一致", true, cp * 0.8f, cm);
-                                // iter14（7.2-2）：当面澄清是坦率的行为证据。
-                                st2.beliefs.Update("玩家尊重我的选择", true, 0.6f, cm);
-                                st2.misconceptionCorrected = true;
-                                st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
-                                return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}）"); } },
-                            new Option { label = "沉默：什么都不说", apply = st2 =>
-                                F("你看着误解在房间里生长，什么也没做。") },
-                        },
-                    };
-                    return new Flow { narration = lines, next = follow };
-                }
-                if (formed != null) {
-                    lines.Add("它怀疑你藏了电池，准备留一手。");
+                    followPrompt = "它盯着维修机器人，纤维微微收拢。\n（你可以利用它的误解，也可以澄清真相。）";
+                } else {
                     st.misconceptionFormed = formed;
+                    st.misconception = st.beliefs.Get(formed).Confidence;
+                    lines.Add("它怀疑你藏了电池，准备留一手。");
+                    followPrompt = "它把注意力落在你身上，准备留一手。\n（你可以解释，也可以让它继续怀疑。）";
                 }
+                // 后续：利用 / 纠正 / 沉默（三种归因共用同一组选项，与 Python 一致）
+                var follow = new ChoiceSet {
+                    prompt = followPrompt,
+                    options = new() {
+                        new Option { label = "利用：不澄清，暗示机器人可疑", apply = st2 => {
+                            var em = st2.Remember(st2.world.day, "player", "暗示嫌疑", "维修机器人",
+                                new[]{"玩家","信息","操纵","误导","暗示"});
+                            st2.beliefs.Update(Misconception.BotSteals, true, 1.2f, em);
+                            st2.misconceptionExploited = true;
+                            st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
+                            return F("它离维修机器人更远了。误解已经扎根。"); } },
+                        new Option { label = "纠正：告诉它电池是你收的", apply = st2 => {
+                            float cp = Misconception.CorrectionPower(st2.beliefs);
+                            var cm = st2.Remember(st2.world.day, "player", "澄清", "电池",
+                                new[]{"玩家","信息","诚实"},
+                                spoken: "电池是我收起来的，机器人没有动它。");
+                            st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
+                            st2.beliefs.Update("玩家的语言与事实一致", true, cp * 0.8f, cm);
+                            // iter14（7.2-2）：当面澄清是坦率的行为证据。
+                            st2.beliefs.Update("玩家尊重我的选择", true, 0.6f, cm);
+                            st2.misconceptionCorrected = true;
+                            st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
+                            return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}）"); } },
+                        new Option { label = "沉默：什么都不说", apply = st2 =>
+                            F("你看着误解在房间里生长，什么也没做。") },
+                    },
+                };
+                return new Flow { narration = lines, next = follow };
             } else {
                 lines.Add("它看着你把电池藏进了控制台下方。它记得这件事。");
                 st.beliefs.Update("玩家在没有回报时也提供帮助", false, 1.4f, m);

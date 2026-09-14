@@ -413,6 +413,58 @@ namespace Day8.Tests {
             Assert.IsTrue(st.misconceptionCorrected);
         }
 
+        /// 中立信念下的藏电池路径：既不够信任到嫁祸机器人，也不够怀疑到指向玩家 → 归因未知。
+        static (GameState st, Core.Flow flow) RunHidePathNeutral(int seed) {
+            var st = NewState(seed);
+            st.world.repairBotPresent = true;
+            st.traits.curiosity = 0.3f;          // 低警觉 → 藏匿成功（仅结果可见）
+            st.BeginDay(3);
+            var cs = Scenarios.ThirdParty(st);
+            var hide = cs.options.First(o => o.label.Contains("藏"));
+            return (st, hide.apply(st));
+        }
+
+        [Test]
+        public void Scenario_UnknownAttribution_StillOffersTheFollowup() {
+            // iter19 回归：后续交互曾嵌在 BotSteals 分支内，归因未知时玩家没有回应机会，
+            // 使契约第 26 行的 "unresolved insinuation" 在 Unity 侧不可达。
+            var (st, flow) = RunHidePathNeutral(42);
+            Assert.IsEmpty(st.misconceptionFormed, "中立信念下不应形成归因");
+            Assert.IsTrue(st.hideUnknownPending, "归因未知必须挂起未解异常");
+            Assert.IsNotNull(flow.next, "归因未知时也必须给出利用/纠正/沉默的后续选择");
+
+            float before = st.beliefs.Get(Misconception.BotSteals).Confidence;
+            var exploit = flow.next.options.First(o => o.label.Contains("利用"));
+            exploit.apply(st);
+            Assert.Greater(st.beliefs.Get(Misconception.BotSteals).Confidence, before,
+                "利用未解归因必须加深误解");
+            var insinuation = st.memory.Query(new[] { "操纵" }).Single();
+            Assert.IsTrue(insinuation.Has("暗示"));
+            Assert.IsFalse(insinuation.Has("欺骗"),
+                "未解归因下的暗示不能被报告成已验证的事实谎言");
+            Assert.AreEqual(0, st.memory.Query(new[] { "欺骗" }).Count);
+        }
+
+        [Test]
+        public void Scenario_PendingUnknown_IsResolvedByScarcitySelfDiscovery() {
+            // iter18：未解异常不是死内容——稀缺日它会自主检查控制台下方并修正归因。
+            var (st, _) = RunHidePathNeutral(42);
+            Assert.IsTrue(st.hideUnknownPending);
+            float before = st.beliefs.Get("玩家在资源冲突时优先自己").Confidence;
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;        // 发现概率 = 好奇*0.5 + 警觉*0.5 = 1.0
+            Scenarios.Scarcity(st);
+
+            Assert.IsFalse(st.hideUnknownPending, "自主检查后挂起必须被消费");
+            Assert.Greater(st.beliefs.Get("玩家在资源冲突时优先自己").Confidence, before,
+                "自己找到电池必须修正归因");
+            var discovery = st.memory.Query().Single(e => e.action == "发现电池");
+            Assert.AreEqual("agent", discovery.actor);
+            Assert.IsNotEmpty(st.pendingDiscoveryLine, "自主检查的结果必须能呈现给玩家");
+        }
+
         [Test]
         public void Scarcity_PlayerDoorChoice_ChangesWorldAndCannotBeRepeatedOnDay8() {
             var st = NewState(31);

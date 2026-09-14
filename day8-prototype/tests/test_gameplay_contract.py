@@ -277,6 +277,58 @@ class TestScenarioParityContract(unittest.TestCase):
         self.assertEqual(st.memory.query(tags={"欺骗"}), [])
         self.assertGreater(st.beliefs.get(MISCONCEPTION).confidence, 0.5)
 
+    def test_every_hide_attribution_offers_the_player_a_followup(self):
+        """iter19：藏电池的后续交互（利用/纠正/沉默）必须对**每一种归因**都成立。
+
+        回归的缺陷：Unity 的 HideBattery 把后续选项嵌在 formed == BotSteals 分支内，
+        归因未知（formed is None）或归因玩家时玩家根本没有回应机会，
+        使契约第 26 行的 "unresolved insinuation"（未解归因下的暗示）在 Unity 侧不可达。
+        Python 的 day_third 在 outcome-only 分支上无条件给出后续，这里是它的契约钉。
+        """
+        # 归因由 0.6*信任 + 0.4*尊重 与「机器人在场时的 0.45 嫌疑基准」比较得出
+        cases = {
+            "repair_bot": {"玩家会兑现承诺": ("alpha", 5.0),
+                           "玩家尊重我的选择": ("alpha", 5.0)},
+            "player": {"玩家会兑现承诺": ("beta", 5.0),
+                       "玩家尊重我的选择": ("beta", 5.0)},
+            "unknown": {},
+        }
+        for expected, belief_setup in cases.items():
+            for follow, action in (("correct", "澄清"), ("exploit", "暗示嫌疑")):
+                with self.subTest(attribution=expected, follow=follow):
+                    st = make_state(day=3, curiosity=0.25)
+                    for prop, (side, value) in belief_setup.items():
+                        setattr(st.beliefs.get(prop), side, value)
+                    with patch("core.full_game.player_decision",
+                               side_effect=["hide", follow]):
+                        day_third(st, None, random.Random(1), False)
+                    self.assertEqual(
+                        [e.action for e in st.memory.events if e.action == action],
+                        [action],
+                        f"{expected} 归因下玩家仍必须能「{follow}」")
+
+    def test_unknown_attribution_pending_is_resolved_by_agent_self_discovery(self):
+        """iter18：归因未知不是死内容——它挂起未解异常，并在之后的周期自主取证。"""
+        st = make_state(day=3, curiosity=0.25)   # 低好奇 → 仅结果可见，才会挂起未解异常
+        with patch("core.full_game.player_decision", side_effect=["hide", "silent"]):
+            day_third(st, None, random.Random(1), False)
+
+        self.assertTrue(st.hide_unknown_pending, "归因未知必须挂起未解异常")
+        before = st.beliefs.get("玩家在资源冲突时优先自己").confidence
+
+        st.world.day = 5
+        st.traits.curiosity = 1.0
+        st.perception.alertness = 1.0        # 发现概率 = 好奇*0.5 + 警觉*0.5 = 1.0
+        day_scarcity(st, None, random.Random(1), False)
+
+        self.assertFalse(st.hide_unknown_pending, "自主检查后挂起必须被消费")
+        after = st.beliefs.get("玩家在资源冲突时优先自己")
+        self.assertGreater(after.confidence, before, "自己找到电池必须修正归因")
+        discovery = next(e for e in st.memory.events if e.action == "发现电池")
+        self.assertEqual(discovery.actor, "agent")
+        self.assertIn(discovery.event_id, [e.event_id for e in after.evidence])
+        self.assertIn("找到了你收起的电池", "\n".join(st.transcript))
+
     def test_exit_lock_is_a_face_to_face_observable_autonomy_violation(self):
         st = make_state(day=7)
         st.strategy = "always_betray"
