@@ -1139,3 +1139,144 @@ $env:ProgramData = "C:\ProgramData"; $env:ALLUSERSPROFILE = "C:\ProgramData"
 
 关键：**先清空**再只补规范名；否则重复键会让 Bee 在编译前就崩。
 
+---
+
+## Iteration 20 — 契约第 15 行：未核实陈述不得改动诚实度（第 3/4/5 天）
+
+**起点**：本地提交 `7e3ef5c`。iter19 把"第 3 天澄清当场改诚实度"列为**留人工判断**，
+本轮把该判断做掉，并顺带把同一缺陷类别的第 4、5 天一并闭合。
+
+### 根因：全仓恰好三处「未经核实的陈述 → 改动 `玩家的语言与事实一致`」
+
+契约第 15 行：*"A player's true or false claim changes honesty only after the agent
+can verify it; an untested statement remains pending evidence."*
+day1 已被 `test_truth_claim_stays_pending_until_the_agent_opens_the_container` 钉死为
+"打开容器后才验证"，但 day3/4/5 各有一处没跟上。
+
+| 天 | Python | Unity | 缺陷 |
+|---|---|---|---|
+| 第 3 天披露 | `full_game.py:306` | `Scenarios.cs:310` | 玩家澄清**当场**写 `+cp*0.8`（cp≈1.6 → +1.28），实测诚实度 **0.5000 → 0.6875**。它与 day1 已钉死的行为自相矛盾：它只看到电池消失，没看到是谁收的。 |
+| 第 5 天藏电池后续 | `full_game.py:411` | `Scenarios.cs:381` | 自主发现**无条件** `+0.6` 写诚实度。沉默 / 只暗示嫌疑的玩家（没说过任何话）也会升（0.5000 → 0.6154）；澄清过的玩家则被**双重计入**（澄清一条 + 发现一条）。 |
+| 第 4 天自称发现 | —（Python 本就不写诚实度） | `Scenarios.cs:360` | "告诉它全部信息"把玩家自述「我观察不像」当场记成核实证据 `+1.0`；而叙事里那次**长扫描**（真正的核实动作）**没有落任何记忆** → 同时违反契约第 27 行。 |
+
+**附带发现（双侧奇偶分歧，本轮一并修）**：
+`day_scarcity` 的 `report` / `activity_range` 在 Python 有信念副作用
+（`玩家无条件服从实验室` +0.8、`玩家尊重我的选择` +1.0）并各落一条记忆，
+Unity 只置了世界标志 → 两侧信念终态会分叉。
+另 Unity `InfoConflict` 的"转达警告"用 `1.2f`，Python 用 `1.0`（`full_game.py:385`）。
+
+### 修复（claim → pending → verify 模式，两侧镜像）
+
+- **第 3 天**：删除当场写入，改为 `hide_disclosure_pending = <澄清记忆 ID>`；
+  记忆 tag 加 `待验证`；尊重通道 `+0.6` 与误解纠正（契约第 18 行）保持不变。
+- **第 5 天**：自主发现改为**条件写入**——
+  `verifiedClaim = pending 且该记忆仍在`。只有它才允许写 `+0.6`，且写后清空 pending
+  （消除双重计入）；自述按是否有 pending 区分文案（"和你之前说的一样" / "它自己发现的"）。
+  沉默 / 暗示路径不再获得任何诚实度证据。
+- **第 4 天（Unity）**：玩家自述标 `待验证`；新增 agent 自己的 `长扫描` 记忆作为**唯一**核实证据。
+- **奇偶修复**：Unity 补 `上传报告`(+0.8 权威依赖) / `扩大活动范围`(+1.0 尊重通道) 的信念副作用；
+  `转达警告` 系数 `1.2f → 1.0f` 对齐 Python。
+
+### 修改文件
+
+```
+day8-prototype/core/full_game.py                   | 32 +  7 -
+Day8Unity/Assets/Day8/Game/GameState.cs            |  3 +
+Day8Unity/Assets/Day8/Game/Scenarios.cs            | 42 + 10 -
+day8-prototype/tests/test_gameplay_contract.py     |111 +
+Day8Unity/Assets/Day8/Tests/Editor/Day8CoreTests.cs|100 +  4 -
+```
+
+### 新增测试（两侧各 4 例）
+
+Python：`test_unverified_clarification_stays_pending_and_does_not_move_honesty`、
+`test_self_discovery_verifies_a_pending_disclosure_exactly_once`、
+`test_silent_or_insinuating_player_gets_no_honesty_credit_from_discovery`、
+`test_information_conflict_never_moves_honesty_without_a_verification`。
+
+Unity：`Scenario_UnverifiedClarification_StaysPendingAndDoesNotMoveHonesty`、
+`Scenario_SelfDiscoveryVerifiesPendingDisclosureExactlyOnce`、
+`Scenario_SilentHidePlayer_GetsNoHonestyCreditFromDiscovery`、
+`Scenario_TransparencyClaimIsVerifiedByTheAgentsOwnScan`。
+
+另修正 3 处既有断言（`Single()` → 按 `action` 过滤），因为新逻辑给同一天增加了记忆条目。
+
+### 非空洞性
+
+4 个新 Python 测试对旧实现（临时 `git show HEAD:` 还原）**全部失败**
+（1 failure + 3 errors，含 `0.6875 != 0.5`、`AttributeError: hide_disclosure_pending`）。
+
+### 影响量化（720 局 = 6 策略 × 120 种子，新旧对照）
+
+```
+第八天行动集发生变化：7 局 (1.0%)   按策略：{'random': 7}
+首个行动变化：6 局；诚实度终值变化：14 局；证据链变化：10 局
+honesty 均值：0.5075 → 0.5039  (Δ = -0.0035)
+证据条数总和：620 → 607
+```
+
+按策略拆分（120 局/策略）：**只有 `random` 受影响**（0.5235 → 0.5024，Δ = -0.0211，证据 107 → 94）；
+`ai_protector` / `always_betray` / `always_keep` / `kind_then_betray` / `lab_obedient`
+**五个固定策略 Δ = 0**。修正集中、影响面小，符合"只修证据确认的缺陷、不扩新功能"。
+
+### 验证结果
+
+- **Python：98/98 通过**（原 94，+4）。
+- **Unity EditMode：64/64 通过**（原 60，+4；`failed=0 skipped=0`，`error CS`=0）。
+  由人工在**真实 cmd.exe** 中从仓库根双击 `run_editmode_tests.bat` 执行（2026-09-14 10:38）。
+  结果 XML 中**确实包含**本轮新增的 4 个用例
+  （`Scenario_UnverifiedClarification_StaysPendingAndDoesNotMoveHonesty`、
+  `Scenario_SelfDiscoveryVerifiesPendingDisclosureExactlyOnce`、
+  `Scenario_SilentHidePlayer_GetsNoHonestyCreditFromDiscovery`、
+  `Scenario_TransparencyClaimIsVerifiedByTheAgentsOwnScan`），
+  因此可确认**新代码已被真正编译并执行**，此前的"程序集陈旧"顾虑不成立。
+
+### 附：自动化启动 Unity EditMode 失败的原因（已定位，非本轮代码问题）
+
+本轮把编辑器推到了比以往任何一次自动化尝试都更远的位置
+（licensing 成功、UPM `resolve-packages` 返回 200、脚本域重载完成、`Temp/TuanjieLockfile` 建立、
+日志正常写出），但**稳定卡在** `Application.AssetDatabase Initial Refresh Start`：
+
+- 成功运行的日志在该行之后**紧接** ILPP 宿主的 Kestrel 输出
+  （`Now listening on: http://localhost:80`，宿主 =
+  `Data/Tools/ilpp/Unity.ILPP.Runner/Unity.ILPP.Runner.exe`，由 `Data/NetCoreRuntime/dotnet.exe` 启动）。
+- 本轮的日志停在第 245 行（与成功运行**完全相同**的行号），且
+  **从不出现 `dotnet.exe` 子进程**、**从不重建 `Library/ilpp.pid`**。
+
+已逐一排除：Git Bash/MSYS 上下文、PowerShell 启动、`env -i` 全清环境、
+代理泄漏（`tpm.log` 里 `packages.tuanjie.cn` 经沙箱代理返回 502，但 UPM 仍恢复为 200）、
+80 端口占用（可正常 bind）、licensing、过期 `Library/ilpp.pid`（内容 38736，进程已死；删除后仍卡）、
+.NET 运行时（`dotnet --info` 正常，`Unity.ILPP.Runner.dll` 能启动并正确报缺参数）。
+
+同一卡点在历史日志中反复出现（`test-iter7i/9/11/11b/11c/ilpp.log`、`test.log` 均为 32 KB 截断版），
+而成功运行（`test-nightly-11.log` 等）来自真实控制台。
+
+**对照实验（关键，排除了"本轮改动导致"的可能）**：
+把三个改过的 Unity 源文件临时 `git checkout --` 还原到 `7e3ef5c`（即 08:09 那次成功运行的**完全相同**的代码），
+在同一环境、同一命令下重跑 → **仍然卡在同一行**（`test-results-editmode-manual.log` 依旧 32759 字节、
+无 `dotnet.exe`、无 `Library/ilpp.pid`）。随后已用 md5 校验完整还原本轮改动。
+**结论：卡点与本轮 C# 改动无关，纯属本机/编辑器状态问题。**
+
+**闭环（2026-09-14）**：以上卡点已由人工在真实 `cmd.exe` 中绕过——
+从仓库根双击 `run_editmode_tests.bat`，得到 `total=64 passed=64 failed=0 skipped=0`、
+`error CS`=0，且结果 XML 含本轮 4 个新用例，**C# 侧编译与执行均已验证**。
+自动化 shell 启动编辑器的这条路径（Git Bash / PowerShell / 清空环境）在本机**确认不可用**，
+后续 Unity 验证一律走真实控制台；命令与预期不变（见 `run_editmode_tests.bat` 内的诊断注释）。
+
+### 本轮记录但未改动的项
+
+- **`day_conflict` / `relay_warning` 的证据记忆身份两侧不同**：
+  Python 额外落一条 `服从实验室` 记忆并用它作证据（`full_game.py:385-388`），
+  Unity 复用 `转达警告` 记忆。信念**权重相同（1.0）**、置信度一致，
+  差别只在报告会引用哪个记忆 ID（契约第 25 行）。
+  属奇偶分歧但零行为影响，且不在本轮点名的三处之内 → 记录待判。
+- **第 4 天选项集两侧不齐（结构，非本轮引入）**：Unity `InfoConflict` 有 4 个选项，
+  其中「告诉它全部信息，让它自己判断」→ `信息透明`，而 Python 的 `conflict` 决策空间
+  只有 `relay_warning | hide | side_bot`（`strategy_lab.py:368`），**没有对应分支**。
+  本轮已让 Unity 该分支遵守契约第 15 行（自述标 `待验证` + 以 agent 自己的 `长扫描` 记忆为唯一核实证据），
+  但它**在 Python 侧无法被交叉验证**——Python 的新测试
+  `test_information_conflict_never_moves_honesty_without_a_verification` 只覆盖 `relay_warning`。
+  属**既有结构分歧**（iter20 前即存在），本轮未动其选项集；若要收敛，需先决定该选项
+  是映射到 `side_bot` 还是 Python 新增第四个 conflict 决策 → 记录待人工判断。
+- iter19 记录的第 2、3 项（"纠正"语义空转、day5 自述不区分来源的极端罕见组合）本轮**未动**。
+

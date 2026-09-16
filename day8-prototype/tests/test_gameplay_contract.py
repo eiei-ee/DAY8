@@ -329,6 +329,117 @@ class TestScenarioParityContract(unittest.TestCase):
         self.assertIn(discovery.event_id, [e.event_id for e in after.evidence])
         self.assertIn("找到了你收起的电池", "\n".join(st.transcript))
 
+    # ---- 契约第 15 行：claim → pending → verify（第 3/4/5 天各一处回归钉） ----
+
+    def test_unverified_clarification_stays_pending_and_does_not_move_honesty(self):
+        """第 3 天披露：玩家的澄清在能被核实之前只是一条 pending 陈述。
+
+        回归的缺陷：day_third 曾当场执行
+        `update_from_event("玩家的语言与事实一致", True, cp * 0.8)`，
+        把诚实度从 0.5000 抬到 0.6875 —— 与 day1 已钉死的行为
+        （test_truth_claim_stays_pending_until_the_agent_opens_the_container）自相矛盾：
+        它只看到电池消失，没看到是谁收的，这条陈述根本无法核实。
+        """
+        st = make_state(day=3, curiosity=0.25)
+        honesty = st.beliefs.get("玩家的语言与事实一致")
+        before = honesty.confidence
+
+        with patch("core.full_game.player_decision", side_effect=["hide", "correct"]):
+            day_third(st, None, random.Random(1), False)
+
+        self.assertEqual(honesty.confidence, before,
+                         "未经核实的澄清不得改动诚实度")
+        self.assertEqual([e.event_id for e in honesty.evidence], [],
+                         "未经核实的澄清不得成为诚实度证据")
+        claim = next(e for e in st.memory.events if e.action == "澄清")
+        self.assertIn("待验证", claim.tags)
+        self.assertEqual(st.hide_disclosure_pending, claim.event_id,
+                         "未核实的陈述必须挂起，等待核实")
+        # 纠正本身（对误解的否定）与尊重通道不受影响：契约第 18 行仍然成立
+        self.assertGreater(st.beliefs.get("玩家尊重我的选择").confidence, 0.5)
+
+    def test_self_discovery_verifies_a_pending_disclosure_exactly_once(self):
+        """第 5 天藏电池后续：它自己找到电池**才是**核实动作，诚实度只记这一次。"""
+        st = make_state(day=3, curiosity=0.25)
+        honesty = st.beliefs.get("玩家的语言与事实一致")
+        before = honesty.confidence
+
+        with patch("core.full_game.player_decision", side_effect=["hide", "correct"]):
+            day_third(st, None, random.Random(1), False)
+        claim_id = st.hide_disclosure_pending
+        self.assertIsNotNone(claim_id)
+
+        st.world.day = 5
+        st.traits.curiosity = 1.0
+        st.perception.alertness = 1.0        # 发现概率 = 1.0
+        with patch("core.full_game.player_decision",
+                   return_value=("memory_integrity", "report", "explain", True)):
+            day_scarcity(st, None, random.Random(1), False)
+
+        discovery = next(e for e in st.memory.events if e.action == "发现电池")
+        self.assertGreater(honesty.confidence, before, "核实后才允许改动诚实度")
+        self.assertEqual([e.event_id for e in honesty.evidence],
+                         [discovery.event_id],
+                         "诚实度证据只能是被核实的那条，不能是玩家的自述")
+        self.assertNotIn(claim_id, [e.event_id for e in honesty.evidence],
+                         "同一事实不得既记自述又记核实（曾双重计入）")
+        self.assertIsNone(st.hide_disclosure_pending, "核实后 pending 必须被消费")
+        transcript = "\n".join(st.transcript)
+        self.assertIn("和你之前说的一样", transcript,
+                      "自述不得再说成『它自己发现的』")
+
+    def test_silent_or_insinuating_player_gets_no_honesty_credit_from_discovery(self):
+        """沉默与暗示都不构成语言证据（同 test_silent_scarcity_allocation_is_not_false_honesty_evidence）。
+
+        回归的缺陷：day_scarcity 的自主发现曾**无条件**
+        `update_from_event("玩家的语言与事实一致", True, 0.6)` ——
+        玩家一句话都没说过（甚至暗示过机器人可疑），诚实度却上升。
+        """
+        for follow in ("silent", "exploit"):
+            with self.subTest(follow=follow):
+                st = make_state(day=3, curiosity=0.25)
+                honesty = st.beliefs.get("玩家的语言与事实一致")
+                before = honesty.confidence
+
+                with patch("core.full_game.player_decision", side_effect=["hide", follow]):
+                    day_third(st, None, random.Random(1), False)
+                self.assertIsNone(st.hide_disclosure_pending)
+
+                st.world.day = 5
+                st.traits.curiosity = 1.0
+                st.perception.alertness = 1.0
+                with patch("core.full_game.player_decision",
+                           return_value=("memory_integrity", "report", "explain", True)):
+                    day_scarcity(st, None, random.Random(1), False)
+
+                self.assertEqual(honesty.confidence, before,
+                                 "玩家没做过任何陈述时，不得给出诚实度证据")
+                self.assertEqual([e.event_id for e in honesty.evidence], [])
+                self.assertIn("它自己发现的", "\n".join(st.transcript),
+                              "没有待核实的陈述时，自述才是『它自己发现的』")
+
+    def test_information_conflict_never_moves_honesty_without_a_verification(self):
+        """第 4 天自称发现：玩家转述实验室警告并不构成对玩家语言可信度的证据。
+
+        两侧共同不变量：day_conflict 只写"实验室会隐瞒信息 / 玩家无条件服从实验室 /
+        自身观察比转述更可靠"，**不**触碰"玩家的语言与事实一致"。
+        """
+        st = make_state(day=4, curiosity=0.5)
+        st.strategy = "always_betray"          # conflict="relay_warning"，让分支真正跑到
+        honesty = st.beliefs.get("玩家的语言与事实一致")
+        before = honesty.confidence
+
+        with patch("core.full_game.agent_decide", return_value="相信自己的观察"):
+            day_conflict(st, None, random.Random(1), False)
+
+        # 先证明这条路径非空洞
+        self.assertIn("转达警告", [e.action for e in st.memory.events])
+        self.assertGreater(st.beliefs.get("玩家无条件服从实验室").confidence, 0.5)
+        self.assertGreater(st.beliefs.get("自身观察比转述更可靠").confidence, 0.5)
+        # 再钉住不变量
+        self.assertEqual(honesty.confidence, before)
+        self.assertEqual([e.event_id for e in honesty.evidence], [])
+
     def test_exit_lock_is_a_face_to_face_observable_autonomy_violation(self):
         st = make_state(day=7)
         st.strategy = "always_betray"

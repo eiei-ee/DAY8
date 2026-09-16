@@ -55,6 +55,9 @@ namespace Day8.Core {
         public float suspicion;
         public bool labContactedAgent;              // iter14：第六周期实验室直接联络过它
         public bool hideUnknownPending;             // iter18：电池消失未归因，它要自主检查
+        // 契约第 15 行：玩家在第三方场景的澄清是**未经核实**的陈述，这里只存它的记忆 ID；
+        // 只有它自己后来找到电池才算核实（见 Scenarios.Scarcity）。
+        public string hideDisclosurePending = "";
         public string pendingDiscoveryLine = "";    // iter18：自主检查的结果行，由 UI 追加到日志
         public float misconception;                 // “维修机器人在抢夺资源”置信度快照
         public string misconceptionFormed = "";     // 本局形成的误解命题

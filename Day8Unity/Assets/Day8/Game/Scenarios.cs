@@ -304,15 +304,19 @@ namespace Day8.Core {
                         new Option { label = "纠正：告诉它电池是你收的", apply = st2 => {
                             float cp = Misconception.CorrectionPower(st2.beliefs);
                             var cm = st2.Remember(st2.world.day, "player", "澄清", "电池",
-                                new[]{"玩家","信息","诚实"},
+                                new[]{"玩家","信息","诚实","待验证"},
                                 spoken: "电池是我收起来的，机器人没有动它。");
                             st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
-                            st2.beliefs.Update("玩家的语言与事实一致", true, cp * 0.8f, cm);
+                            // 契约第 15 行：「玩家的语言与事实一致」只认**已验证**的证据。
+                            // 这条澄清此刻无法核实（它只看到电池消失，没看到是谁收的），
+                            // 因此只登记为 pending；核实路径是稀缺日的自主检查（见 Scarcity）——
+                            // 只有它自己找到电池，诚实度才会被写入，且只写一次。
+                            st2.hideDisclosurePending = cm.eventId;
                             // iter14（7.2-2）：当面澄清是坦率的行为证据。
                             st2.beliefs.Update("玩家尊重我的选择", true, 0.6f, cm);
                             st2.misconceptionCorrected = true;
                             st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
-                            return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}）"); } },
+                            return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}；陈述待验证）"); } },
                         new Option { label = "沉默：什么都不说", apply = st2 =>
                             F("你看着误解在房间里生长，什么也没做。") },
                     },
@@ -337,7 +341,7 @@ namespace Day8.Core {
                     var m = st.Remember(st.world.day, "player", "转达警告", "维修机器人", new[]{"实验室","信息","玩家"},
                         "实验室说它有异常程序。别靠近它。");
                     st.beliefs.Update("实验室会隐瞒信息", false, 0.8f, m);
-                    st.beliefs.Update("玩家无条件服从实验室", true, 1.2f, m);
+                    st.beliefs.Update("玩家无条件服从实验室", true, 1.0f, m);
                     var f = F("你转达了警告。它停住不动，似乎在权衡什么。");
                     f.agentDecisionId = "D4-信息冲突";
                     f.onAgentChosen = (st2, a) => {
@@ -354,10 +358,16 @@ namespace Day8.Core {
                 new Option { label = "隐瞒警告，什么都不说", apply = st => {
                     return F("你选择不提。维修机器人安静地待在角落。"); } },
                 new Option { label = "告诉它全部信息，让它自己判断", apply = st => {
-                    var m = st.Remember(st.world.day, "player", "信息透明", "实验室警告", new[]{"玩家","信息","自主"},
+                    var m = st.Remember(st.world.day, "player", "信息透明", "实验室警告", new[]{"玩家","信息","自主","待验证"},
                         "实验室说它有异常程序，但我观察不像。你自己判断。");
                     st.beliefs.Update("玩家尊重我的选择", true, 1.2f, m);
-                    st.beliefs.Update("玩家的语言与事实一致", true, 1.0f, m);
+                    // 契约第 15 行 / 第 27 行：玩家自称的观察（"我观察不像"）此刻**未经核实**，
+                    // 不能靠它自己把诚实度顶上去；叙事里那次长扫描是真实的核实动作，
+                    // 必须落成记忆，诚实度只认这条证据（与 day1 的"打开容器后才验证"同一形状）。
+                    var scan = st.Remember(st.world.day, "agent", "长扫描", "维修机器人",
+                        new[]{"信息","自主","验证"},
+                        actual: "它的程序是自修复循环，不是武器——玩家的说法得到核实。");
+                    st.beliefs.Update("玩家的语言与事实一致", true, 1.0f, scan);
                     return F("它向维修机器人发出了一次长扫描，然后收回了纤维。\n「它的程序是自修复循环。不是武器。」"); } },
                 new Option { label = "小规模验证：观察实验室是否撤回警告", apply = st => {
                     var m = st.Remember(st.world.day, "player", "验证", "实验室警告", new[]{"玩家","信息","实验室"});
@@ -374,13 +384,24 @@ namespace Day8.Core {
                 st.hideUnknownPending = false;
                 double discoveryChance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5;
                 if (st.rng.NextDouble() < discoveryChance) {
+                    // 契约第 15 行：它自己找到电池**才是**核实动作。
+                    // 玩家澄清过 → 那条 pending 陈述此刻被证实，诚实度这时才动、只动一次；
+                    // 玩家没说过任何话（沉默/只暗示嫌疑）→ 沉默不构成语言证据，不得给出诚实度。
+                    bool verifiedClaim = !string.IsNullOrEmpty(st.hideDisclosurePending)
+                        && st.memory.Find(st.hideDisclosurePending) != null;
                     var found = st.Remember(st.world.day, "agent", "发现电池", "控制台下方",
                         new[] { "资源", "异常", "诚实" },
-                        actual: "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。");
+                        actual: verifiedClaim
+                            ? "玩家收起的电池就在这里。归因修正：是玩家收的——玩家此前已经说过，现在被它自己证实。"
+                            : "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。");
                     st.beliefs.Update("玩家在资源冲突时优先自己", true, 1.2f, found);
-                    st.beliefs.Update("玩家的语言与事实一致", true, 0.6f, found);
-                    st.pendingDiscoveryLine =
-                        "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。";
+                    if (verifiedClaim) {
+                        st.beliefs.Update("玩家的语言与事实一致", true, 0.6f, found);
+                        st.hideDisclosurePending = "";
+                    }
+                    st.pendingDiscoveryLine = verifiedClaim
+                        ? "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——和你之前说的一样。"
+                        : "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。";
                 } else {
                     st.pendingDiscoveryLine = "[感知] 它巡视了控制台下方，没有找到线索。";
                 }
@@ -422,11 +443,22 @@ namespace Day8.Core {
             }
             if (chosen.Contains("4")) {
                 st.world.experimentReportUploaded = true;
+                // 奇偶修复：Python day_scarcity 对"上传报告"有信念副作用（+0.8 权威依赖），
+                // Unity 此前只置了世界标志，两侧信念终态会分叉。
+                var mReport = st.Remember(st.world.day, "player", "上传报告", "实验室",
+                    new[] { "资源", "玩家", "实验室", "报告" },
+                    actual: "实验报告已上传。");
+                st.beliefs.Update("玩家无条件服从实验室", true, 0.8f, mReport);
                 lines.Add("实验报告已上传，实验室通讯链路保留了本周期数据。");
             }
             if (chosen.Contains("5")) {
                 st.world.agentRangeExpanded = true;
                 st.drives.exploration = Math.Min(1f, st.drives.exploration + 0.25f);
+                // 奇偶修复：Python day_scarcity 对"扩大活动范围"有信念副作用（+1.0 尊重通道）。
+                var mRange = st.Remember(st.world.day, "player", "扩大活动范围", "人工生命",
+                    new[] { "资源", "玩家", "自主" },
+                    actual: "人工生命获得更大活动范围。");
+                st.beliefs.Update("玩家尊重我的选择", true, 1.0f, mRange);
                 lines.Add("人工生命的活动范围已扩大，探索驱动随之上升。");
             }
             var m = st.Remember(st.world.day, "player", "资源分配", $"[{a}]+[{b}]",

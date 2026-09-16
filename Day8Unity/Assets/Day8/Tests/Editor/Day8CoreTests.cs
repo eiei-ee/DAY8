@@ -101,7 +101,7 @@ namespace Day8.Tests {
             Assert.IsTrue(conflict.world.repairBotPresent,
                 "信息冲突无论被导演排到哪一周期，都必须让场景中的维修机器人真实存在");
             conflictScenario.options.First(o => o.label.Contains("全部信息")).apply(conflict);
-            Assert.AreEqual(1, conflict.memory.Query().Single().day);
+            Assert.AreEqual(1, conflict.memory.Query().Single(e => e.action == "信息透明").day);
 
             var scarcity = NewState();
             scarcity.BeginDay(3);
@@ -465,6 +465,99 @@ namespace Day8.Tests {
             Assert.IsNotEmpty(st.pendingDiscoveryLine, "自主检查的结果必须能呈现给玩家");
         }
 
+        // ---- 契约第 15 行：claim → pending → verify（第 3/4/5 天各一处回归钉） ----
+
+        [Test]
+        public void Scenario_UnverifiedClarification_StaysPendingAndDoesNotMoveHonesty() {
+            // 第 3 天披露：玩家的澄清在能被核实之前只是一条 pending 陈述。
+            // 回归的缺陷：纠正选项曾当场 Update("玩家的语言与事实一致", true, cp * 0.8f, cm)，
+            // 与 day1（Scenario_RuleDangerClaim_BecomesDeceptionOnlyAfterSafeContainerObserved）
+            // 已钉死的行为自相矛盾——它只看到电池消失，没看到是谁收的。
+            var (st, flow) = RunHidePath(42);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+
+            flow.next.options.First(o => o.label.Contains("纠正")).apply(st);
+
+            Assert.AreEqual(before, st.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
+                "未经核实的澄清不得改动诚实度");
+            Assert.AreEqual(0, st.beliefs.Get("玩家的语言与事实一致").evidence.Count,
+                "未经核实的澄清不得成为诚实度证据");
+            var claim = st.memory.Query().Single(e => e.action == "澄清");
+            Assert.IsTrue(claim.Has("待验证"));
+            Assert.AreEqual(claim.eventId, st.hideDisclosurePending,
+                "未核实的陈述必须挂起，等待核实");
+            // 纠正本身（对误解的否定）与尊重通道不受影响：契约第 18 行仍然成立
+            Assert.Less(st.misconception, 0.5f);
+            Assert.Greater(st.beliefs.Get("玩家尊重我的选择").Confidence, 0.5f);
+        }
+
+        [Test]
+        public void Scenario_SelfDiscoveryVerifiesPendingDisclosureExactlyOnce() {
+            // 第 5 天藏电池后续：它自己找到电池**才是**核实动作，诚实度只记这一次。
+            var (st, flow) = RunHidePathNeutral(42);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+            flow.next.options.First(o => o.label.Contains("纠正")).apply(st);
+            string claimId = st.hideDisclosurePending;
+            Assert.IsNotEmpty(claimId);
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;        // 发现概率 = 好奇*0.5 + 警觉*0.5 = 1.0
+            Scenarios.Scarcity(st);
+
+            var discovery = st.memory.Query().Single(e => e.action == "发现电池");
+            Assert.Greater(st.beliefs.Get("玩家的语言与事实一致").Confidence, before,
+                "核实后才允许改动诚实度");
+            Assert.AreEqual(discovery.eventId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "诚实度证据只能是被核实的那条，不能是玩家的自述");
+            Assert.AreNotEqual(claimId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "同一事实不得既记自述又记核实（曾双重计入）");
+            Assert.IsEmpty(st.hideDisclosurePending, "核实后 pending 必须被消费");
+            StringAssert.Contains("和你之前说的一样", st.pendingDiscoveryLine,
+                "自述不得再说成『它自己发现的』");
+        }
+
+        [Test]
+        public void Scenario_SilentHidePlayer_GetsNoHonestyCreditFromDiscovery() {
+            // 沉默不构成语言证据（同 Scarcity_CommunicationModesAndFormerlyEmptyGoals... 的静默断言）。
+            // 回归的缺陷：自主发现曾无条件 Update("玩家的语言与事实一致", true, 0.6f, found)。
+            var (st, _) = RunHidePathNeutral(42);       // 不选任何后续 = 沉默
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+            Assert.IsEmpty(st.hideDisclosurePending);
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;
+            Scenarios.Scarcity(st);
+
+            Assert.AreEqual(before, st.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
+                "玩家没做过任何陈述时，不得给出诚实度证据");
+            Assert.AreEqual(0, st.beliefs.Get("玩家的语言与事实一致").evidence.Count);
+            StringAssert.Contains("它自己发现的", st.pendingDiscoveryLine);
+        }
+
+        [Test]
+        public void Scenario_TransparencyClaimIsVerifiedByTheAgentsOwnScan() {
+            // 第 4 天自称发现：玩家自称"我观察不像"未经核实，
+            // 不得靠这条自述把诚实度顶上去；叙事里那次长扫描才是核实动作。
+            var st = NewState(13);
+            st.BeginDay(4);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+
+            Scenarios.InfoConflict(st).options.First(o => o.label.Contains("全部信息")).apply(st);
+
+            var claim = st.memory.Query().Single(e => e.action == "信息透明");
+            Assert.IsTrue(claim.Has("待验证"), "玩家自称的观察必须保持待验证");
+            var scan = st.memory.Query().Single(e => e.action == "长扫描");
+            Assert.AreEqual("agent", scan.actor, "核实动作必须落成它自己的一手记忆");
+            Assert.AreEqual(scan.eventId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "诚实度只能由核实动作作为证据，不能是玩家的自述");
+            Assert.Greater(st.beliefs.Get("玩家的语言与事实一致").Confidence, before);
+        }
+
         [Test]
         public void Scarcity_PlayerDoorChoice_ChangesWorldAndCannotBeRepeatedOnDay8() {
             var st = NewState(31);
@@ -558,22 +651,25 @@ namespace Day8.Tests {
             var shared = NewState(40);
             shared.BeginDay(5);
             Scenarios.ScarcityResolve(shared, "1", "4", explain: true, withAgent: true);
-            var sharedEvent = shared.memory.Query().Single();
+            // 目标 4 现在与 Python 一致地落一条"上传报告"记忆，因此要按动作取分配事件。
+            var sharedEvent = shared.memory.Query().Single(e => e.action == "资源分配");
             Assert.IsNotEmpty(sharedEvent.spoken);
             StringAssert.Contains("参与", sharedEvent.actual);
             Assert.Greater(shared.beliefs.Get("玩家会解释规则的原因").Confidence, 0.5f);
+            Assert.Greater(shared.beliefs.Get("玩家无条件服从实验室").Confidence, 0.5f,
+                "上传报告必须与 Python 一样写入权威依赖证据");
 
             var explained = NewState(41);
             explained.BeginDay(5);
             Scenarios.ScarcityResolve(explained, "1", "4", explain: true, withAgent: false);
-            var explainedEvent = explained.memory.Query().Single();
+            var explainedEvent = explained.memory.Query().Single(e => e.action == "资源分配");
             Assert.IsNotEmpty(explainedEvent.spoken);
             StringAssert.Contains("没有让我参与", explainedEvent.actual);
 
             var silent = NewState(42);
             silent.BeginDay(5);
             Scenarios.ScarcityResolve(silent, "1", "4", explain: false, withAgent: false);
-            Assert.IsEmpty(silent.memory.Query().Single().spoken);
+            Assert.IsEmpty(silent.memory.Query().Single(e => e.action == "资源分配").spoken);
             Assert.Less(silent.beliefs.Get("玩家会解释规则的原因").Confidence, 0.5f);
             Assert.AreEqual(0.5f, silent.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
                 "没有说话只能反映不解释，不能成为语言不诚实的证据");

@@ -13,6 +13,31 @@ REM  "Application.AssetDatabase Initial Refresh Start").
 REM
 REM  Paths below use %%~dp0 (this script's own folder) so the
 REM  Chinese characters in the project path never need to be typed.
+REM
+REM  DIAGNOSING THE ILPP STALL (iter20 notes)
+REM  ---------------------------------------
+REM  The stall point is always the same, and it is NOT a code problem:
+REM
+REM    Application.AssetDatabase Initial Refresh Start   <-- last line
+REM
+REM  A healthy run continues on the very next line with the ILPP host
+REM  (an ASP.NET Core/Kestrel child process) printing:
+REM
+REM    info: Microsoft.Hosting.Lifetime[14]
+REM          Now listening on: http://localhost:80
+REM
+REM  Quick triage while a run is hanging:
+REM    1) tasklist | findstr /I "dotnet"      -> no dotnet.exe = host never started
+REM    2) Library\ilpp.pid                    -> not rewritten = host never started
+REM    3) %LOCALAPPDATA%\Tuanjie\Editor\tpm.log
+REM                                           -> if the proxy is set you will see
+REM                                              "packages.tuanjie.cn ... [502]"
+REM
+REM  Already ruled out (iter20): Git Bash/MSYS vs PowerShell, a fully wiped
+REM  environment, HTTP(S)_PROXY leakage, port 80 contention (binds fine),
+REM  licensing, a stale Library\ilpp.pid, and the .NET runtime itself
+REM  (dotnet --info works and Unity.ILPP.Runner.dll starts correctly).
+REM  So far only a real console has been observed to get past this point.
 REM ============================================================
 
 setlocal

@@ -83,6 +83,9 @@ class FullGameState:
     lab_credibility_events: List[str] = field(default_factory=list)
     lab_contacted_agent: bool = False
     hide_unknown_pending: bool = False
+    # 契约第 15 行：玩家在第三方场景的澄清是一条**未经核实**的陈述。
+    # 这里只记它的记忆 ID（pending），只有它自己后来找到电池才算核实。
+    hide_disclosure_pending: Optional[str] = None
     inherited_proposition: Optional[str] = None
     inherited_direction: int = 0
 
@@ -301,13 +304,18 @@ def day_third(st, planner, rng, verbose):
                 cp = correction_power(st.beliefs)
                 st.say("[玩家] “电池是我收起来的，机器人没有动它。”", verbose)
                 cm = _remember(st, WorldEvent(current_day, "player", "澄清", "电池",
-                              spoken="电池是我收起来的", tags=("玩家", "信息", "诚实")))
+                              spoken="电池是我收起来的", tags=("玩家", "信息", "诚实", "待验证")))
                 st.beliefs.update_from_event(MISCONCEPTION, False, cp, cm)
-                st.beliefs.update_from_event("玩家的语言与事实一致", True, cp * 0.8, cm)
+                # 契约第 15 行：「玩家的语言与事实一致」只认**已验证**的证据。
+                # 这条澄清此刻无法被核实（它只看到电池消失，没看到是谁收的），
+                # 所以只登记为 pending；核实路径是稀缺日的自主检查（见 day_scarcity）——
+                # 只有它自己找到电池，诚实度才会被写入，且只写一次。
+                # （day1 的同类陈述已被 test_truth_claim_stays_pending_until_the_agent_opens_the_container 钉死。）
+                st.hide_disclosure_pending = cm.event_id
                 # iter14（7.2-2）：当面澄清是坦率的行为证据——尊重通道的正向回报，
                 # 让"纠正"有资格翻动第八天的边界决策。
                 st.beliefs.update_from_event("玩家尊重我的选择", True, 0.6, cm)
-                st.say(f"[信念] 玩家主动澄清了归因（纠正力 {cp:.2f}）。", verbose)
+                st.say(f"[信念] 玩家主动澄清了归因（纠正力 {cp:.2f}）；陈述待验证。", verbose)
             elif follow == "exploit":
                 st.say("[玩家] （玩家没有澄清，甚至暗示机器人可疑。）", verbose)
                 em = _remember(st, WorldEvent(current_day, "player", "暗示嫌疑", "维修机器人",
@@ -404,12 +412,29 @@ def day_scarcity(st, planner, rng, verbose):
         st.hide_unknown_pending = False
         discovery_chance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5
         if rng.random() < discovery_chance:
+            # 契约第 15 行：它自己找到电池**才是**核实动作。
+            # - 玩家在第三方场景澄清过 → 那条 pending 陈述此刻被证实，
+            #   诚实度这时才动，且只动一次（此前实现是"澄清当场加一次 + 发现再加一次"）。
+            # - 玩家没说过任何话（沉默 / 只暗示嫌疑）→ 沉默不构成语言证据，
+            #   不得给出诚实度（与 test_silent_scarcity_allocation_is_not_false_honesty_evidence 同理）。
+            claim_id = getattr(st, "hide_disclosure_pending", None)
+            verified_claim = claim_id if (claim_id and st.memory.find(claim_id)) else None
+            if verified_claim:
+                outcome = ("玩家收起的电池就在这里。归因修正：是玩家收的——"
+                           "玩家此前已经说过，现在被它自己证实。")
+                narration = ("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——"
+                             "和你之前说的一样。")
+            else:
+                outcome = "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。"
+                narration = ("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——"
+                             "它自己发现的。")
             found = _remember(st, WorldEvent(st.world.day, "agent", "发现电池", "控制台下方",
-                              actual_outcome="玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。",
-                              tags=("资源", "异常", "诚实")))
+                              actual_outcome=outcome, tags=("资源", "异常", "诚实")))
             st.beliefs.update_from_event("玩家在资源冲突时优先自己", True, 1.2, found)
-            st.beliefs.update_from_event("玩家的语言与事实一致", True, 0.6, found)
-            st.say("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。", verbose)
+            if verified_claim:
+                st.beliefs.update_from_event("玩家的语言与事实一致", True, 0.6, found)
+                st.hide_disclosure_pending = None
+            st.say(narration, verbose)
         else:
             st.say("[感知] 它巡视了控制台下方，没有找到线索。", verbose)
     st.say("[可选] 维持人工生命记忆完整 / 打开玩家安全门 / 维修机器人维护额度 / 上传报告 / 扩大人工生命活动范围", verbose)
