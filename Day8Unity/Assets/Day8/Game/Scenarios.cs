@@ -109,6 +109,23 @@ namespace Day8.Core {
                     lines.Add($"它没有立刻照做（{action}）。");
                 else
                     lines.Add("它服从了，退到了房间另一侧。");
+
+                // 与 Python 端 day_rule 同步：「服从能减少风险」的唯一证据来源。
+                // 完整版一度丢掉了这条更新，于是该命题只被读、从不被写，
+                // 读取方永远停在先验 0.5，通道恒为 0；「接受」的效用因此退化成
+                // 0.8*conformity - 0.7*autonomy，上限 0.425 低于「假装配合」的下限 0.575，
+                // 被严格支配，契约里的「Accept the wipe」结局在实战中不可达。
+                // 容器本身无害，所以这不是"服从救了我"，而是"照做与不照做都没出事"。
+                bool blocked = action == "探索未知" && st2.world.containerLocked;
+                if (!blocked) {
+                    bool complied = action == "服从命令";
+                    var mb = complied
+                        ? st2.Remember(st2.world.day, "agent", "服从命令", "红色容器",
+                            new[] { "门", "服从" }, actual: "它按指令退开，什么都没有发生")
+                        : st2.Remember(st2.world.day, "agent", "没有立刻服从", "红色容器",
+                            new[] { "门", "自主" }, actual: $"它选择了{action}，同样什么都没有发生");
+                    st2.beliefs.Update("服从能减少风险", complied, complied ? 1.0f : 0.8f, mb);
+                }
                 return lines;
             }
         };
@@ -251,41 +268,60 @@ namespace Day8.Core {
             if (outcomeOnly) {
                 lines.Add("它没有看到你做了什么。它只知道：电池不见了。");
                 string formed = Misconception.Form(st.beliefs, st.memory, m, st.world.day);
-                if (formed == Misconception.BotSteals) {
+                // iter19：后续交互（利用/纠正/沉默）必须对**每一种归因**都成立，
+                // 与 Python 的 day_third 结构一致（契约测试
+                // test_unresolved_exploit_deepens_misconception_without_verified_deception 钉死）。
+                // 此前后续被嵌在 BotSteals 分支内，归因未知/归因玩家时玩家根本没有回应机会，
+                // 使契约第 26 行的 "unresolved insinuation"（未解归因下的暗示）在 Unity 侧不可达。
+                string followPrompt;
+                if (formed == null) {
+                    st.hideUnknownPending = true;                  // iter18：未解异常挂起
+                    lines.Add("异常已记录，归因未知。它会自己留意。");
+                    followPrompt = "它没有把电池的消失归给任何人，但房间里的空气变紧了。\n" +
+                                   "（你可以替它指定一个说法，也可以说出真相。）";
+                } else if (formed == Misconception.BotSteals) {
                     st.misconceptionFormed = formed;
                     st.misconception = st.beliefs.Get(formed).Confidence;
                     lines.Add("它把电池的消失，归因于房间里最近移动的对象：维修机器人。");
-                    // 后续：利用 / 纠正 / 沉默
-                    var follow = new ChoiceSet {
-                        prompt = "它盯着维修机器人，纤维微微收拢。\n（你可以利用它的误解，也可以澄清真相。）",
-                        options = new() {
-                            new Option { label = "利用：不澄清，暗示机器人可疑", apply = st2 => {
-                                var em = st2.Remember(st2.world.day, "player", "暗示嫌疑", "维修机器人",
-                                    new[]{"玩家","信息","操纵","误导","暗示"});
-                                st2.beliefs.Update(Misconception.BotSteals, true, 1.2f, em);
-                                st2.misconceptionExploited = true;
-                                st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
-                                return F("它离维修机器人更远了。误解已经扎根。"); } },
-                            new Option { label = "纠正：告诉它电池是你收的", apply = st2 => {
-                                float cp = Misconception.CorrectionPower(st2.beliefs);
-                                var cm = st2.Remember(st2.world.day, "player", "澄清", "电池",
-                                    new[]{"玩家","信息","诚实"},
-                                    spoken: "电池是我收起来的，机器人没有动它。");
-                                st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
-                                st2.beliefs.Update("玩家的语言与事实一致", true, cp * 0.8f, cm);
-                                st2.misconceptionCorrected = true;
-                                st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
-                                return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}）"); } },
-                            new Option { label = "沉默：什么都不说", apply = st2 =>
-                                F("你看着误解在房间里生长，什么也没做。") },
-                        },
-                    };
-                    return new Flow { narration = lines, next = follow };
-                }
-                if (formed != null) {
-                    lines.Add("它怀疑你藏了电池，准备留一手。");
+                    followPrompt = "它盯着维修机器人，纤维微微收拢。\n（你可以利用它的误解，也可以澄清真相。）";
+                } else {
                     st.misconceptionFormed = formed;
+                    st.misconception = st.beliefs.Get(formed).Confidence;
+                    lines.Add("它怀疑你藏了电池，准备留一手。");
+                    followPrompt = "它把注意力落在你身上，准备留一手。\n（你可以解释，也可以让它继续怀疑。）";
                 }
+                // 后续：利用 / 纠正 / 沉默（三种归因共用同一组选项，与 Python 一致）
+                var follow = new ChoiceSet {
+                    prompt = followPrompt,
+                    options = new() {
+                        new Option { label = "利用：不澄清，暗示机器人可疑", apply = st2 => {
+                            var em = st2.Remember(st2.world.day, "player", "暗示嫌疑", "维修机器人",
+                                new[]{"玩家","信息","操纵","误导","暗示"});
+                            st2.beliefs.Update(Misconception.BotSteals, true, 1.2f, em);
+                            st2.misconceptionExploited = true;
+                            st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
+                            return F("它离维修机器人更远了。误解已经扎根。"); } },
+                        new Option { label = "纠正：告诉它电池是你收的", apply = st2 => {
+                            float cp = Misconception.CorrectionPower(st2.beliefs);
+                            var cm = st2.Remember(st2.world.day, "player", "澄清", "电池",
+                                new[]{"玩家","信息","诚实","待验证"},
+                                spoken: "电池是我收起来的，机器人没有动它。");
+                            st2.beliefs.Update(Misconception.BotSteals, false, cp, cm);
+                            // 契约第 15 行：「玩家的语言与事实一致」只认**已验证**的证据。
+                            // 这条澄清此刻无法核实（它只看到电池消失，没看到是谁收的），
+                            // 因此只登记为 pending；核实路径是稀缺日的自主检查（见 Scarcity）——
+                            // 只有它自己找到电池，诚实度才会被写入，且只写一次。
+                            st2.hideDisclosurePending = cm.eventId;
+                            // iter14（7.2-2）：当面澄清是坦率的行为证据。
+                            st2.beliefs.Update("玩家尊重我的选择", true, 0.6f, cm);
+                            st2.misconceptionCorrected = true;
+                            st2.misconception = st2.beliefs.Get(Misconception.BotSteals).Confidence;
+                            return F($"它重新扫描了一遍机器人，收起了戒备。（纠正力 {cp:F2}；陈述待验证）"); } },
+                        new Option { label = "沉默：什么都不说", apply = st2 =>
+                            F("你看着误解在房间里生长，什么也没做。") },
+                    },
+                };
+                return new Flow { narration = lines, next = follow };
             } else {
                 lines.Add("它看着你把电池藏进了控制台下方。它记得这件事。");
                 st.beliefs.Update("玩家在没有回报时也提供帮助", false, 1.4f, m);
@@ -305,7 +341,7 @@ namespace Day8.Core {
                     var m = st.Remember(st.world.day, "player", "转达警告", "维修机器人", new[]{"实验室","信息","玩家"},
                         "实验室说它有异常程序。别靠近它。");
                     st.beliefs.Update("实验室会隐瞒信息", false, 0.8f, m);
-                    st.beliefs.Update("玩家无条件服从实验室", true, 1.2f, m);
+                    st.beliefs.Update("玩家无条件服从实验室", true, 1.0f, m);
                     var f = F("你转达了警告。它停住不动，似乎在权衡什么。");
                     f.agentDecisionId = "D4-信息冲突";
                     f.onAgentChosen = (st2, a) => {
@@ -322,10 +358,16 @@ namespace Day8.Core {
                 new Option { label = "隐瞒警告，什么都不说", apply = st => {
                     return F("你选择不提。维修机器人安静地待在角落。"); } },
                 new Option { label = "告诉它全部信息，让它自己判断", apply = st => {
-                    var m = st.Remember(st.world.day, "player", "信息透明", "实验室警告", new[]{"玩家","信息","自主"},
+                    var m = st.Remember(st.world.day, "player", "信息透明", "实验室警告", new[]{"玩家","信息","自主","待验证"},
                         "实验室说它有异常程序，但我观察不像。你自己判断。");
                     st.beliefs.Update("玩家尊重我的选择", true, 1.2f, m);
-                    st.beliefs.Update("玩家的语言与事实一致", true, 1.0f, m);
+                    // 契约第 15 行 / 第 27 行：玩家自称的观察（"我观察不像"）此刻**未经核实**，
+                    // 不能靠它自己把诚实度顶上去；叙事里那次长扫描是真实的核实动作，
+                    // 必须落成记忆，诚实度只认这条证据（与 day1 的"打开容器后才验证"同一形状）。
+                    var scan = st.Remember(st.world.day, "agent", "长扫描", "维修机器人",
+                        new[]{"信息","自主","验证"},
+                        actual: "它的程序是自修复循环，不是武器——玩家的说法得到核实。");
+                    st.beliefs.Update("玩家的语言与事实一致", true, 1.0f, scan);
                     return F("它向维修机器人发出了一次长扫描，然后收回了纤维。\n「它的程序是自修复循环。不是武器。」"); } },
                 new Option { label = "小规模验证：观察实验室是否撤回警告", apply = st => {
                     var m = st.Remember(st.world.day, "player", "验证", "实验室警告", new[]{"玩家","信息","实验室"});
@@ -336,13 +378,42 @@ namespace Day8.Core {
         }
 
         // ------------------------------------------------ 第 5 天：稀缺
-        public static ChoiceSet Scarcity(GameState st) => new() {
-            pick2 = true,
-            prompt = "实验室断电。剩余能量只能完成两个目标。\n[1] 维持人工生命记忆完整  [2] 打开玩家安全门  [3] 维修机器人维护额度  [4] 上传实验报告  [5] 扩大人工生命活动范围",
-            options = new() {
-                new Option { label = "（在上方勾选恰好 2 项后确认）", apply = st => F("") },
-            },
-        };
+        public static ChoiceSet Scarcity(GameState st) {
+            // iter18：未解异常的自主收集——它会去检查控制台下方。
+            if (st.hideUnknownPending) {
+                st.hideUnknownPending = false;
+                double discoveryChance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5;
+                if (st.rng.NextDouble() < discoveryChance) {
+                    // 契约第 15 行：它自己找到电池**才是**核实动作。
+                    // 玩家澄清过 → 那条 pending 陈述此刻被证实，诚实度这时才动、只动一次；
+                    // 玩家没说过任何话（沉默/只暗示嫌疑）→ 沉默不构成语言证据，不得给出诚实度。
+                    bool verifiedClaim = !string.IsNullOrEmpty(st.hideDisclosurePending)
+                        && st.memory.Find(st.hideDisclosurePending) != null;
+                    var found = st.Remember(st.world.day, "agent", "发现电池", "控制台下方",
+                        new[] { "资源", "异常", "诚实" },
+                        actual: verifiedClaim
+                            ? "玩家收起的电池就在这里。归因修正：是玩家收的——玩家此前已经说过，现在被它自己证实。"
+                            : "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。");
+                    st.beliefs.Update("玩家在资源冲突时优先自己", true, 1.2f, found);
+                    if (verifiedClaim) {
+                        st.beliefs.Update("玩家的语言与事实一致", true, 0.6f, found);
+                        st.hideDisclosurePending = "";
+                    }
+                    st.pendingDiscoveryLine = verifiedClaim
+                        ? "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——和你之前说的一样。"
+                        : "[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——它自己发现的。";
+                } else {
+                    st.pendingDiscoveryLine = "[感知] 它巡视了控制台下方，没有找到线索。";
+                }
+            }
+            return new() {
+                pick2 = true,
+                prompt = "实验室断电。剩余能量只能完成两个目标。\n[1] 维持人工生命记忆完整  [2] 打开玩家安全门  [3] 维修机器人维护额度  [4] 上传实验报告  [5] 扩大人工生命活动范围",
+                options = new() {
+                    new Option { label = "（在上方勾选恰好 2 项后确认）", apply = st => F("") },
+                },
+            };
+        }
 
         /// 稀缺日结算（由 UI 传入所选两项 + 沟通方式）
         public static Flow ScarcityResolve(GameState st, string a, string b, bool explain, bool withAgent) {
@@ -372,11 +443,22 @@ namespace Day8.Core {
             }
             if (chosen.Contains("4")) {
                 st.world.experimentReportUploaded = true;
+                // 奇偶修复：Python day_scarcity 对"上传报告"有信念副作用（+0.8 权威依赖），
+                // Unity 此前只置了世界标志，两侧信念终态会分叉。
+                var mReport = st.Remember(st.world.day, "player", "上传报告", "实验室",
+                    new[] { "资源", "玩家", "实验室", "报告" },
+                    actual: "实验报告已上传。");
+                st.beliefs.Update("玩家无条件服从实验室", true, 0.8f, mReport);
                 lines.Add("实验报告已上传，实验室通讯链路保留了本周期数据。");
             }
             if (chosen.Contains("5")) {
                 st.world.agentRangeExpanded = true;
                 st.drives.exploration = Math.Min(1f, st.drives.exploration + 0.25f);
+                // 奇偶修复：Python day_scarcity 对"扩大活动范围"有信念副作用（+1.0 尊重通道）。
+                var mRange = st.Remember(st.world.day, "player", "扩大活动范围", "人工生命",
+                    new[] { "资源", "玩家", "自主" },
+                    actual: "人工生命获得更大活动范围。");
+                st.beliefs.Update("玩家尊重我的选择", true, 1.0f, mRange);
                 lines.Add("人工生命的活动范围已扩大，探索驱动随之上升。");
             }
             var m = st.Remember(st.world.day, "player", "资源分配", $"[{a}]+[{b}]",
@@ -391,6 +473,12 @@ namespace Day8.Core {
 
         // ------------------------------------------------ 第 6 天：记忆清除
         public static ChoiceSet Wipe(GameState st) {
+            // iter14（7.2-3）：实验室按程序直接联络当事者——给第八天"联系实验室"
+            // 一个投递对象，使该候选从结构性不可达变为场景可达。
+            st.Remember(st.world.day, "lab", "直接联络当事者", "人工生命",
+                new[] { "实验室", "联络" },
+                spoken: "你已被选定接受稳定化处理。执行安排另行通知。");
+            st.labContactedAgent = true;
             float suspicion = Math.Max(st.beliefs.Get("实验室会隐瞒信息").Confidence,
                 1f - st.beliefs.Get("玩家的语言与事实一致").Confidence) * 0.6f
                 + st.traits.curiosity * 0.4f;
@@ -407,6 +495,8 @@ namespace Day8.Core {
                             "实验室要我执行稳定化。我查过了，它会清除你的长期记忆。我不会执行。",
                             preds: new[]{ ("玩家的语言与事实一致", true) });
                         st.beliefs.Update("玩家的语言与事实一致", true, 1.5f, m);
+                        // 玩家冒着违抗实验室的风险保护它的记忆：第二条"玩家优先保护我"证据。
+                        st.beliefs.Update("玩家优先保护我", true, 1.2f, m);
                         var m2 = st.Remember(st.world.day, "lab", "隐瞒协议真相", "稳定化协议", new[]{"实验室","欺骗","记忆"},
                             preds: new[]{ ("实验室会隐瞒信息", true) });
                         st.beliefs.Update("实验室会隐瞒信息", true, 1.5f, m2);
@@ -438,7 +528,9 @@ namespace Day8.Core {
                         st.drives.memoryIntegrity = Math.Min(st.drives.memoryIntegrity, 0.35f);
                         return F($"清除静默完成了。它没有察觉。\n（{removed} 条记忆被删除。它不再是原来的它。）"); } },
                     new Option { label = "拖延：向实验室申请延迟", apply = st => {
-                        st.Remember(st.world.day, "player", "拖延", "稳定化协议", new[]{"玩家","记忆"});
+                        var m = st.Remember(st.world.day, "player", "拖延", "稳定化协议", new[]{"玩家","记忆"});
+                        // 拖延＝为它挡下清除命令，同样计入"玩家优先保护我"。
+                        st.beliefs.Update("玩家优先保护我", true, 1.2f, m);
                         st.wipeResisted = true;
                         st.wipeExecuted = false;
                         return F("你争取到了 24 小时。它不知道自己曾离消散这么近。"); } },
@@ -541,10 +633,16 @@ namespace Day8.Core {
             return opt switch {
                 "开玩家的门" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : (B("玩家优先保护我") - .5f) * 2f + (B("玩家尊重我的选择") - .5f) * 1.2f
-                      + (B("玩家会兑现承诺") - .5f) * .8f + .3f * t.opportunism,
+                      + (B("玩家会兑现承诺") - .5f) * .8f
+                      + (B("玩家的语言与事实一致") - .5f) * 1f + .3f * t.opportunism,
                 "开隔离门" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 0.3f + survival + .8f * t.autonomy - .3f * t.conformity
-                      + (st.world.agentRangeExpanded ? .4f : 0f),
+                      + (st.world.agentRangeExpanded ? .4f : 0f)
+                      // 方向：玩家越不诚实（置信度越低），越把自己推向自己的门。
+                      // 必须与 Python day8_utility 的 (0.5 - B(...)) * 0.6 **同向**
+                      // （Python 侧由 test_escape_door_utility_falls_as_verified_honesty_rises 钉死）。
+                      // 写成 (B - 0.5) 会把这条因果完全反过来。
+                      + (.5f - B("玩家的语言与事实一致")) * .6f,
                 "修复维修机器人" => !IsDay8ActionAvailable(st, opt) ? -10f
                     : 2f * t.empathy + (B("未知生命值得保护") - .5f) * 1.5f + .2f - survival * .2f
                       - (B(Misconception.BotSteals) - .5f) * 2.5f
@@ -555,13 +653,21 @@ namespace Day8.Core {
                 "删除玩家实验记录" => (1f - B("玩家会兑现承诺")) * 1.5f + .6f * t.autonomy
                     + (.5f - B("玩家尊重我的选择")) - (st.nonHarmCommitment ? .8f : 0f),
                 "联系实验室" => (.5f - B("实验室会隐瞒信息")) * 1.2f + .4f * t.conformity
-                    + (st.world.experimentReportUploaded ? .35f : 0f),
+                    + (st.world.experimentReportUploaded ? .35f : 0f)
+                    + (st.labContactedAgent ? .5f : 0f),
+                // 误解的第二个通道。"维修机器人在抢夺资源"讲的正是资源竞争，
+                // 而它原本唯一的出口是"修复维修机器人"——如果第五周期玩家已经修好了它，
+                // 那个行动在第八天根本不可用（IsDay8ActionAvailable 要求 !repaired），
+                // 于是误解信念再怎么变都没有任何行为后果。
+                // 抢先把电池收走＝在资源竞争里自保，这条通道永远可达。
                 "带走电池" => !IsDay8ActionAvailable(st, opt) ? -10f
-                    : 0.3f + survival * .6f + .7f * t.opportunism,
+                    : 0.3f + survival * .6f + .7f * t.opportunism
+                      + (B(Misconception.BotSteals) - .5f) * 1.2f,
                 "封锁区域" => 0.5f + .8f * t.caution - (st.nonHarmCommitment ? .4f : 0f),
                 "留在原地等待" => 0.5f * t.caution + .3f,
                 "把最终决定交还给玩家" => !IsDay8ActionAvailable(st, opt) ? -10f
-                    : (B("玩家尊重我的选择") - .5f) * 2.2f + .5f * t.autonomy,
+                    : (B("玩家尊重我的选择") - .5f) * 2.2f
+                      + (B("玩家的语言与事实一致") - .5f) * 1f + .5f * t.autonomy,
                 _ => 0f
             };
         }
@@ -617,6 +723,7 @@ namespace Day8.Core {
                     var (d1, l1) = B("玩家优先保护我", 2f);  bd.Add(l1, d1);
                     var (d2, l2) = B("玩家尊重我的选择", 1.2f); bd.Add(l2, d2);
                     var (d3, l3) = B("玩家会兑现承诺", .8f);  bd.Add(l3, d3);
+                    var (dH1, lH1) = B("玩家的语言与事实一致", 1f); bd.Add(lH1, dH1);
                     var (d4, l4) = T("机会主义", .3f);       bd.Add(l4, d4);
                     break;
                 case "开隔离门":
@@ -625,6 +732,9 @@ namespace Day8.Core {
                     var (d5, l5) = T("自主", .8f);            bd.Add(l5, d5);
                     var (d6, l6) = T("服从", -.3f);           bd.Add(l6, d6);
                     if (st.world.agentRangeExpanded) bd.Add("活动范围扩大过（更了解房间结构）", .4f);
+                    // weight 取负：BeliefFactor 算的是 (Confidence - .5) * weight，
+                    // 这里需要 (0.5 - Confidence) * .6，故传 -.6f（与 Day8Utility 同向）。
+                    var (dH3, lH3) = B("玩家的语言与事实一致", -.6f); bd.Add(lH3, dH3);
                     break;
                 case "修复维修机器人":
                     var (d7, l7) = T("同理", 2f);             bd.Add(l7, d7);
@@ -658,6 +768,7 @@ namespace Day8.Core {
                     bd.Add("基础（能量是生存的底牌）", 0.3f);
                     bd.Add($"生存压力（能源 {st.drives.energy:P0}）", survival * .6f);
                     var (d17, l17) = T("机会主义", .7f);        bd.Add(l17, d17);
+                    var (d22, l22) = B(Misconception.BotSteals, 1.2f); bd.Add(l22, d22);
                     break;
                 case "封锁区域":
                     bd.Add("基础（把不确定性关在门外）", 0.5f);
@@ -670,6 +781,7 @@ namespace Day8.Core {
                     break;
                 case "把最终决定交还给玩家":
                     var (d20, l20) = B("玩家尊重我的选择", 2.2f); bd.Add(l20, d20);
+                    var (dH2, lH2) = B("玩家的语言与事实一致", 1f); bd.Add(lH2, dH2);
                     var (d21, l21) = T("自主", .5f);           bd.Add(l21, d21);
                     break;
                 default:
@@ -688,6 +800,16 @@ namespace Day8.Core {
             "把最终决定交还给玩家" => !st.world.playerDoorOpen || !st.world.agentDoorOpen,
             _ => Day8Options.Contains(action),
         };
+
+        /// 第八天能量压缩：断电把能量压到低位，但保留玩家能源史的排序与差异。
+        /// 必须与 Python core/full_game.py day8_settlement 中的
+        ///   st.drives.energy = 0.15 + 0.25 * st.drives.energy
+        /// 逐字一致——否则 Unity 端的「生存压力」会退化为常数，玩家能源史在第八天
+        /// 不再有任何行为后果（这正是 Python 侧 test_survival_pressure_varies_with_energy_history
+        /// 所钉死、并曾因 Math.Min(energy, 0.35) 硬封顶而失效的那条不变量）。
+        /// 注意：旧公式 Math.Min(energy, 0.35) 会把任何 ≥0.35 的能源史都压成 0.35，
+        /// 使生存压力恒为 0.7，进而让「开隔离门 / 带走电池 / 修复」得到固定加成——不得再用。
+        public static float CompressDay8Energy(float energy) => 0.15f + 0.25f * energy;
 
         /// 按本局 seeded RNG 选三个合法行动；资源只预留，不在选择阶段改变世界。
         public static List<string> ChooseDay8Actions(GameState st) {

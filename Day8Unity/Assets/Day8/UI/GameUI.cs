@@ -495,6 +495,10 @@ namespace Day8.UI {
             ClearChoices();
             if (cs == null) { NightAndNext(); return; }
             promptText.text = cs.prompt;
+            if (!string.IsNullOrEmpty(st.pendingDiscoveryLine)) {
+                AppendLog("<color=#7B838C>" + st.pendingDiscoveryLine + "</color>");
+                st.pendingDiscoveryLine = "";
+            }
             if (cs.pick2) { ShowScarcityUI(); return; }
             foreach (var opt in cs.options) {
                 OptionButton(choiceBox, opt.label, () => PickOption(opt));
@@ -653,7 +657,7 @@ namespace Day8.UI {
             day = 8;
             st.BeginDay(day);
             st.world.power = false;
-            st.drives.energy = Math.Min(st.drives.energy, 0.35f);
+            st.drives.energy = Scenarios.CompressDay8Energy(st.drives.energy);
             phase = Phase.Day8Reveal;
             day8RevealIndex = 0;
             dayLabel.text = "DAY 8 / 断电";

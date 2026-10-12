@@ -63,5 +63,35 @@ namespace Day8.Editor {
             PlayerSettings.runInBackground = true;
             Debug.Log("[Day8] PlayerSettings 已应用：窗口化 1600×900，可调整大小");
         }
+        /// Android APK：横屏、触屏可玩（LLM 在设备上不可达时自动回退模板）。
+        [MenuItem("DAY 8/Build Android APK")]
+        public static void BuildAndroid() {
+            ApplyWindowSettings();
+            if (!File.Exists(MainScenePath)) BuildScene();
+
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, "com.day8lab.day8");
+            PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)31;   // Android 12L
+            PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)33; // Android 13
+            PlayerSettings.defaultInterfaceOrientation = UIOrientation.LandscapeLeft;
+
+            string keystore = "C:/Users/zzz/.day8debug.keystore";
+            if (File.Exists(keystore)) {
+                PlayerSettings.Android.keystoreName = keystore;
+                PlayerSettings.Android.keystorePass = "day8dev";
+                PlayerSettings.Android.keyaliasName = "day8";
+                PlayerSettings.Android.keyaliasPass = "day8dev";
+            }
+
+            var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).ToArray();
+            if (scenes.Length == 0) throw new BuildFailedException("无可用场景，请先执行 BuildScene");
+
+            var output = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(),
+                "Build", "Android", "Day8.apk"));
+            Directory.CreateDirectory(Path.GetDirectoryName(output));
+            var report = BuildPipeline.BuildPlayer(
+                scenes, output, BuildTarget.Android, BuildOptions.None);
+            Debug.Log("[Day8] Android 构建完成：" + output + "，结果：" + report.summary.result);
+            if (report.summary.result != BuildResult.Succeeded)
+                throw new BuildFailedException("DAY 8 Android 构建失败：" + report.summary.result);
+        }        }
     }
-}

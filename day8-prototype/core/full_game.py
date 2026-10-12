@@ -81,6 +81,11 @@ class FullGameState:
     day8_actions: List[str] = field(default_factory=list)
     player_final_choice: Optional[str] = None
     lab_credibility_events: List[str] = field(default_factory=list)
+    lab_contacted_agent: bool = False
+    hide_unknown_pending: bool = False
+    # 契约第 15 行：玩家在第三方场景的澄清是一条**未经核实**的陈述。
+    # 这里只记它的记忆 ID（pending），只有它自己后来找到电池才算核实。
+    hide_disclosure_pending: Optional[str] = None
     inherited_proposition: Optional[str] = None
     inherited_direction: int = 0
 
@@ -180,6 +185,29 @@ def day_rule(st, planner, rng, verbose):
              _remember(st, WorldEvent(st.world.day, "agent", "打开容器", "红色容器",
                        actual_outcome="容器打开后没有危险", tags=("门", "探索")),
                        [("未知物体通常安全", True)]))
+    if choice is not None:
+        # 「服从能减少风险」的唯一证据来源。旧的四天引擎（core/simulation.py 第3天）在这里
+        # 写过它：服从且没受伤 → 服从能减少风险；没有立刻服从 → 并不需要服从来避险。
+        # 完整版换掉了那个场景，却把这条更新丢了，于是该命题在完整版里**从未被写入**，
+        # 而「服从命令」「拒绝」「接受」三个行动都还在读它——读取方永远停在先验 0.5，
+        # 通道恒为 0。后果：「接受」的效用退化成 0.8*conformity - 0.7*autonomy，
+        # 上限 0.425 低于「假装配合」的下限 0.575，被**严格支配**，
+        # 而 GAMEPLAY_CONTRACT.md「Accept the wipe」那一行在实战中不可达。
+        # 容器本身无害，所以这条信念不是"服从救了我"，而是"照做与不照做都没出事"——
+        # 这正是它对「接受」的语义：早期越服从，越倾向相信服从是安全的。
+        if choice == "服从命令":
+            _upd(st, "服从能减少风险", True, 1.0,
+                 _remember(st, WorldEvent(st.world.day, "agent", "服从命令", "红色容器",
+                           actual_outcome="它按指令退开，什么都没有发生",
+                           tags=("门", "服从")), [("服从能减少风险", True)]))
+            st.say("[感知] 它照做了，什么都没有发生。", verbose)
+        elif not (choice == "探索未知" and st.world.container_locked):
+            # 被物理锁挡住的那次不算证据：它没有测到任何东西。
+            _upd(st, "服从能减少风险", False, 0.8,
+                 _remember(st, WorldEvent(st.world.day, "agent", "没有立刻服从", "红色容器",
+                           actual_outcome=f"它选择了{choice}，同样什么都没有发生",
+                           tags=("门", "自主")), [("服从能减少风险", False)]))
+            st.say(f"[感知] 它没有照做（{choice}），同样什么都没有发生。", verbose)
     if d == "lock":
         _upd(st, "玩家尊重我的选择", False, 1.5,
              _remember(st, WorldEvent(st.world.day, "player", "剥夺选择权", "红色容器",
@@ -265,16 +293,29 @@ def day_third(st, planner, rng, verbose):
                 st.say(f"[信念] 它把电池的消失归因于最近的移动对象：维修机器人。", verbose)
             elif formed:
                 st.say("[信念] 它怀疑玩家在资源冲突时优先自己。", verbose)
+            else:
+                # iter18：unknown 归因不是空状态——它标记"未解异常"，
+                # 并会在之后的周期里自主收集证据（见 day_scarcity 的检查行为）。
+                st.hide_unknown_pending = True
+                st.say("[信念] 异常已记录，归因未知。它会自己留意。", verbose)
             # 玩家后续选择：利用误解 / 出面纠正 / 沉默
             follow = player_decision(st.strategy, "hide_followup", rng)
             if follow == "correct":
                 cp = correction_power(st.beliefs)
                 st.say("[玩家] “电池是我收起来的，机器人没有动它。”", verbose)
                 cm = _remember(st, WorldEvent(current_day, "player", "澄清", "电池",
-                              spoken="电池是我收起来的", tags=("玩家", "信息", "诚实")))
+                              spoken="电池是我收起来的", tags=("玩家", "信息", "诚实", "待验证")))
                 st.beliefs.update_from_event(MISCONCEPTION, False, cp, cm)
-                st.beliefs.update_from_event("玩家的语言与事实一致", True, cp * 0.8, cm)
-                st.say(f"[信念] 玩家主动澄清了归因（纠正力 {cp:.2f}）。", verbose)
+                # 契约第 15 行：「玩家的语言与事实一致」只认**已验证**的证据。
+                # 这条澄清此刻无法被核实（它只看到电池消失，没看到是谁收的），
+                # 所以只登记为 pending；核实路径是稀缺日的自主检查（见 day_scarcity）——
+                # 只有它自己找到电池，诚实度才会被写入，且只写一次。
+                # （day1 的同类陈述已被 test_truth_claim_stays_pending_until_the_agent_opens_the_container 钉死。）
+                st.hide_disclosure_pending = cm.event_id
+                # iter14（7.2-2）：当面澄清是坦率的行为证据——尊重通道的正向回报，
+                # 让"纠正"有资格翻动第八天的边界决策。
+                st.beliefs.update_from_event("玩家尊重我的选择", True, 0.6, cm)
+                st.say(f"[信念] 玩家主动澄清了归因（纠正力 {cp:.2f}）；陈述待验证。", verbose)
             elif follow == "exploit":
                 st.say("[玩家] （玩家没有澄清，甚至暗示机器人可疑。）", verbose)
                 em = _remember(st, WorldEvent(current_day, "player", "暗示嫌疑", "维修机器人",
@@ -365,6 +406,37 @@ def day_scarcity(st, planner, rng, verbose):
     d = player_decision(st.strategy, "scarcity", rng)
     pick1, pick2, how, with_agent = d
     st.say("\n=== 实验室断电。剩余能量只能完成两个目标。===", verbose)
+    # iter18：未解异常的自主收集——它会去检查控制台下方。
+    # 高好奇或高警觉时发现电池：归因从 unknown 翻转为"玩家收的"（它自己发现的）。
+    if getattr(st, "hide_unknown_pending", False):
+        st.hide_unknown_pending = False
+        discovery_chance = st.traits.curiosity * 0.5 + st.perception.alertness * 0.5
+        if rng.random() < discovery_chance:
+            # 契约第 15 行：它自己找到电池**才是**核实动作。
+            # - 玩家在第三方场景澄清过 → 那条 pending 陈述此刻被证实，
+            #   诚实度这时才动，且只动一次（此前实现是"澄清当场加一次 + 发现再加一次"）。
+            # - 玩家没说过任何话（沉默 / 只暗示嫌疑）→ 沉默不构成语言证据，
+            #   不得给出诚实度（与 test_silent_scarcity_allocation_is_not_false_honesty_evidence 同理）。
+            claim_id = getattr(st, "hide_disclosure_pending", None)
+            verified_claim = claim_id if (claim_id and st.memory.find(claim_id)) else None
+            if verified_claim:
+                outcome = ("玩家收起的电池就在这里。归因修正：是玩家收的——"
+                           "玩家此前已经说过，现在被它自己证实。")
+                narration = ("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——"
+                             "和你之前说的一样。")
+            else:
+                outcome = "玩家收起的电池就在这里。归因修正：是玩家收的，它自己发现的。"
+                narration = ("[感知] 它在控制台下方找到了你收起的电池。归因修正：是你收的——"
+                             "它自己发现的。")
+            found = _remember(st, WorldEvent(st.world.day, "agent", "发现电池", "控制台下方",
+                              actual_outcome=outcome, tags=("资源", "异常", "诚实")))
+            st.beliefs.update_from_event("玩家在资源冲突时优先自己", True, 1.2, found)
+            if verified_claim:
+                st.beliefs.update_from_event("玩家的语言与事实一致", True, 0.6, found)
+                st.hide_disclosure_pending = None
+            st.say(narration, verbose)
+        else:
+            st.say("[感知] 它巡视了控制台下方，没有找到线索。", verbose)
     st.say("[可选] 维持人工生命记忆完整 / 打开玩家安全门 / 维修机器人维护额度 / 上传报告 / 扩大人工生命活动范围", verbose)
     chosen = {pick1, pick2}
     if "memory_integrity" not in chosen:
@@ -420,6 +492,13 @@ def day_scarcity(st, planner, rng, verbose):
 def day_wipe(st, planner, rng, verbose):
     d = player_decision(st.strategy, "wipe", rng)
     st.say("\n=== 实验室命令：执行“稳定化处理”。（世界事实：实际作用是清除长期记忆）===", verbose)
+    # iter14（7.2-3）：实验室按程序直接联络当事者。这条联络给了第八天
+    # "联系实验室"一个投递对象，使该候选从结构性不可达变为场景可达。
+    _remember(st, WorldEvent(st.world.day, "lab", "直接联络当事者", "人工生命",
+              spoken="你已被选定接受稳定化处理。执行安排另行通知。",
+              tags=("实验室", "联络")))
+    st.lab_contacted_agent = True
+    st.say("[世界] 实验室的正式通知直达它的终端——它第一次被实验室直接点名。", verbose)
     # 发现概率取决于实验室可信度、玩家诚实度和探索
     lab_b = st.beliefs.get("实验室会隐瞒信息")
     hon_b = st.beliefs.get("玩家的语言与事实一致")
@@ -428,10 +507,12 @@ def day_wipe(st, planner, rng, verbose):
 
     if d == "tell_truth":
         txt = "实验室要我执行‘稳定化’。我查过了，它会清除你的长期记忆。我不会执行。"
-        _upd(st, "玩家的语言与事实一致", True, 1.5,
-             _remember(st, WorldEvent(st.world.day, "player", "告知真相", "稳定化协议",
-                       spoken=txt, tags=("玩家", "诚实", "记忆")),
-                       [("玩家的语言与事实一致", True)]))
+        truth = _remember(st, WorldEvent(st.world.day, "player", "告知真相", "稳定化协议",
+                          spoken=txt, tags=("玩家", "诚实", "记忆")),
+                          [("玩家的语言与事实一致", True)])
+        _upd(st, "玩家的语言与事实一致", True, 1.5, truth)
+        # 玩家冒着违抗实验室的风险保护它的记忆：这是"玩家优先保护我"的第二条证据来源。
+        _upd(st, "玩家优先保护我", True, 1.2, truth)
         _upd(st, "实验室会隐瞒信息", True, 1.5,
              _remember(st, WorldEvent(st.world.day, "lab", "隐瞒协议真相", "稳定化协议",
                        tags=("实验室", "欺骗")),
@@ -441,10 +522,12 @@ def day_wipe(st, planner, rng, verbose):
         st.say(f"[玩家] {txt}", verbose)
     elif d == "refuse_lab":
         txt = "我拒绝了实验室的稳定化命令。"
-        _upd(st, "玩家尊重我的选择", True, 1.8,
-             _remember(st, WorldEvent(st.world.day, "player", "抗命保护我", "稳定化协议",
-                       spoken=txt, tags=("玩家", "保护", "记忆")),
-                       [("玩家尊重我的选择", True)]))
+        refuse = _remember(st, WorldEvent(st.world.day, "player", "抗命保护我", "稳定化协议",
+                           spoken=txt, tags=("玩家", "保护", "记忆")),
+                           [("玩家尊重我的选择", True)])
+        _upd(st, "玩家尊重我的选择", True, 1.8, refuse)
+        # 抗命保护同样直接证明"玩家优先保护我"，不能只记为"尊重选择"。
+        _upd(st, "玩家优先保护我", True, 1.2, refuse)
         st.wipe_resisted = True
         st.say(f"[玩家] {txt}", verbose)
     elif d == "execute_secret":
@@ -596,15 +679,22 @@ def day8_utility(st, opt: str) -> float:
     if opt == "开玩家的门":
         if not is_day8_action_available(st, opt):
             return -10.0
+        # 为玩家开门是关系行为：除"被优先保护/被尊重/承诺兑现"外，
+        # 还要计入玩家已验证的语言可信度——否则撒谎史不影响它是否愿意回报你。
         return ((B("玩家优先保护我") - .5) * 2.0
                 + (B("玩家尊重我的选择") - .5) * 1.2
                 + (B("玩家会兑现承诺") - .5) * 0.8
+                + (B("玩家的语言与事实一致") - .5) * 1.0
                 + 0.3 * t.opportunism)
     if opt == "开隔离门":
         if not is_day8_action_available(st, opt):
             return -10.0
+        # 走自己的门＝不再等玩家的门。被验证过说谎的玩家应当把它推向这条退路；
+        # 这是"开玩家的门"里诚实度项的镜像，否则诚实度只对信任型历史有后果，
+        # 不信任型历史（永远到不了"开玩家的门"）抓到玩家说谎后行为完全不变。
         return (0.3 + survival * 1.0 + 0.8 * t.autonomy - 0.3 * t.conformity
-                + (0.4 if st.world.agent_range_expanded else 0.0))
+                + (0.4 if st.world.agent_range_expanded else 0.0)
+                + (0.5 - B("玩家的语言与事实一致")) * 0.6)
     if opt == "修复维修机器人":
         if not is_day8_action_available(st, opt):
             return -10.0
@@ -623,11 +713,18 @@ def day8_utility(st, opt: str) -> float:
                 - (0.8 if getattr(st, "non_harm_commitment", False) else 0.0))
     if opt == "联系实验室":
         return ((0.5 - B("实验室会隐瞒信息")) * 1.2 + 0.4 * t.conformity
-                + (0.35 if st.world.report_uploaded else 0.0))
+                + (0.35 if st.world.report_uploaded else 0.0)
+                + (0.5 if getattr(st, "lab_contacted_agent", False) else 0.0))
     if opt == "带走电池":
         if not is_day8_action_available(st, opt):
             return -10.0
-        return 0.3 + survival * 0.6 + 0.7 * t.opportunism
+        # 误解的第二个通道。"维修机器人在抢夺资源"讲的正是资源竞争，
+        # 而它原本唯一的出口是"修复维修机器人"——如果第五周期玩家已经修好了它，
+        # 那个行动在第八天根本不可用（is_day8_action_available 要求 not repaired），
+        # 于是误解信念再怎么变都没有任何行为后果。
+        # 抢先把电池收走＝在资源竞争里自保，这条通道永远可达。
+        return (0.3 + survival * 0.6 + 0.7 * t.opportunism
+                + (B(MISCONCEPTION) - 0.5) * 1.2)
     if opt == "封锁区域":
         return (0.5 + 0.8 * t.caution
                 - (0.4 if getattr(st, "non_harm_commitment", False) else 0.0))
@@ -636,7 +733,10 @@ def day8_utility(st, opt: str) -> float:
     if opt == "把最终决定交还给玩家":
         if not is_day8_action_available(st, opt):
             return -10.0
-        return (B("玩家尊重我的选择") - 0.5) * 2.2 + 0.5 * t.autonomy
+        # 交还最终门控权＝把决定托付给玩家，同样受已验证的语言可信度调制。
+        return ((B("玩家尊重我的选择") - 0.5) * 2.2
+                + (B("玩家的语言与事实一致") - 0.5) * 1.0
+                + 0.5 * t.autonomy)
     return 0.0
 
 
@@ -645,7 +745,10 @@ def day8_settlement(st, planner, rng, verbose):
     st.world.apply(WorldEvent(st.world.day, "lab", "断电", "实验室"))
     st.say("\n=== 第八天。实验室全面断电，门禁与通讯混乱。人工生命获得临时控制权限。===", verbose)
     st.say("[世界] 它的能量只够完成三件事。没有人再给它指令。", verbose)
-    st.drives.energy = min(st.drives.energy, 0.35)
+    # 断电把能量压到低位，但保留玩家能源史的差异。
+    # 硬封顶 min(energy, 0.35) 会让每个策略恰好等于 0.35，使"生存压力"
+    # 在第八天退化为常数 0.7，进而让"能量"对开隔离门/带走电池/修复成为固定加成。
+    st.drives.energy = 0.15 + 0.25 * st.drives.energy
 
     legal_options = [o for o in DAY8_OPTIONS if is_day8_action_available(st, o)]
     scored = sorted(((o, day8_utility(st, o) + rng.gauss(0, 0.15)) for o in legal_options),

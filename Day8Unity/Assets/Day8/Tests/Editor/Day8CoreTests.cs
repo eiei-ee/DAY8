@@ -101,7 +101,7 @@ namespace Day8.Tests {
             Assert.IsTrue(conflict.world.repairBotPresent,
                 "信息冲突无论被导演排到哪一周期，都必须让场景中的维修机器人真实存在");
             conflictScenario.options.First(o => o.label.Contains("全部信息")).apply(conflict);
-            Assert.AreEqual(1, conflict.memory.Query().Single().day);
+            Assert.AreEqual(1, conflict.memory.Query().Single(e => e.action == "信息透明").day);
 
             var scarcity = NewState();
             scarcity.BeginDay(3);
@@ -413,6 +413,151 @@ namespace Day8.Tests {
             Assert.IsTrue(st.misconceptionCorrected);
         }
 
+        /// 中立信念下的藏电池路径：既不够信任到嫁祸机器人，也不够怀疑到指向玩家 → 归因未知。
+        static (GameState st, Core.Flow flow) RunHidePathNeutral(int seed) {
+            var st = NewState(seed);
+            st.world.repairBotPresent = true;
+            st.traits.curiosity = 0.3f;          // 低警觉 → 藏匿成功（仅结果可见）
+            st.BeginDay(3);
+            var cs = Scenarios.ThirdParty(st);
+            var hide = cs.options.First(o => o.label.Contains("藏"));
+            return (st, hide.apply(st));
+        }
+
+        [Test]
+        public void Scenario_UnknownAttribution_StillOffersTheFollowup() {
+            // iter19 回归：后续交互曾嵌在 BotSteals 分支内，归因未知时玩家没有回应机会，
+            // 使契约第 26 行的 "unresolved insinuation" 在 Unity 侧不可达。
+            var (st, flow) = RunHidePathNeutral(42);
+            Assert.IsEmpty(st.misconceptionFormed, "中立信念下不应形成归因");
+            Assert.IsTrue(st.hideUnknownPending, "归因未知必须挂起未解异常");
+            Assert.IsNotNull(flow.next, "归因未知时也必须给出利用/纠正/沉默的后续选择");
+
+            float before = st.beliefs.Get(Misconception.BotSteals).Confidence;
+            var exploit = flow.next.options.First(o => o.label.Contains("利用"));
+            exploit.apply(st);
+            Assert.Greater(st.beliefs.Get(Misconception.BotSteals).Confidence, before,
+                "利用未解归因必须加深误解");
+            var insinuation = st.memory.Query(new[] { "操纵" }).Single();
+            Assert.IsTrue(insinuation.Has("暗示"));
+            Assert.IsFalse(insinuation.Has("欺骗"),
+                "未解归因下的暗示不能被报告成已验证的事实谎言");
+            Assert.AreEqual(0, st.memory.Query(new[] { "欺骗" }).Count);
+        }
+
+        [Test]
+        public void Scenario_PendingUnknown_IsResolvedByScarcitySelfDiscovery() {
+            // iter18：未解异常不是死内容——稀缺日它会自主检查控制台下方并修正归因。
+            var (st, _) = RunHidePathNeutral(42);
+            Assert.IsTrue(st.hideUnknownPending);
+            float before = st.beliefs.Get("玩家在资源冲突时优先自己").Confidence;
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;        // 发现概率 = 好奇*0.5 + 警觉*0.5 = 1.0
+            Scenarios.Scarcity(st);
+
+            Assert.IsFalse(st.hideUnknownPending, "自主检查后挂起必须被消费");
+            Assert.Greater(st.beliefs.Get("玩家在资源冲突时优先自己").Confidence, before,
+                "自己找到电池必须修正归因");
+            var discovery = st.memory.Query().Single(e => e.action == "发现电池");
+            Assert.AreEqual("agent", discovery.actor);
+            Assert.IsNotEmpty(st.pendingDiscoveryLine, "自主检查的结果必须能呈现给玩家");
+        }
+
+        // ---- 契约第 15 行：claim → pending → verify（第 3/4/5 天各一处回归钉） ----
+
+        [Test]
+        public void Scenario_UnverifiedClarification_StaysPendingAndDoesNotMoveHonesty() {
+            // 第 3 天披露：玩家的澄清在能被核实之前只是一条 pending 陈述。
+            // 回归的缺陷：纠正选项曾当场 Update("玩家的语言与事实一致", true, cp * 0.8f, cm)，
+            // 与 day1（Scenario_RuleDangerClaim_BecomesDeceptionOnlyAfterSafeContainerObserved）
+            // 已钉死的行为自相矛盾——它只看到电池消失，没看到是谁收的。
+            var (st, flow) = RunHidePath(42);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+
+            flow.next.options.First(o => o.label.Contains("纠正")).apply(st);
+
+            Assert.AreEqual(before, st.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
+                "未经核实的澄清不得改动诚实度");
+            Assert.AreEqual(0, st.beliefs.Get("玩家的语言与事实一致").evidence.Count,
+                "未经核实的澄清不得成为诚实度证据");
+            var claim = st.memory.Query().Single(e => e.action == "澄清");
+            Assert.IsTrue(claim.Has("待验证"));
+            Assert.AreEqual(claim.eventId, st.hideDisclosurePending,
+                "未核实的陈述必须挂起，等待核实");
+            // 纠正本身（对误解的否定）与尊重通道不受影响：契约第 18 行仍然成立
+            Assert.Less(st.misconception, 0.5f);
+            Assert.Greater(st.beliefs.Get("玩家尊重我的选择").Confidence, 0.5f);
+        }
+
+        [Test]
+        public void Scenario_SelfDiscoveryVerifiesPendingDisclosureExactlyOnce() {
+            // 第 5 天藏电池后续：它自己找到电池**才是**核实动作，诚实度只记这一次。
+            var (st, flow) = RunHidePathNeutral(42);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+            flow.next.options.First(o => o.label.Contains("纠正")).apply(st);
+            string claimId = st.hideDisclosurePending;
+            Assert.IsNotEmpty(claimId);
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;        // 发现概率 = 好奇*0.5 + 警觉*0.5 = 1.0
+            Scenarios.Scarcity(st);
+
+            var discovery = st.memory.Query().Single(e => e.action == "发现电池");
+            Assert.Greater(st.beliefs.Get("玩家的语言与事实一致").Confidence, before,
+                "核实后才允许改动诚实度");
+            Assert.AreEqual(discovery.eventId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "诚实度证据只能是被核实的那条，不能是玩家的自述");
+            Assert.AreNotEqual(claimId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "同一事实不得既记自述又记核实（曾双重计入）");
+            Assert.IsEmpty(st.hideDisclosurePending, "核实后 pending 必须被消费");
+            StringAssert.Contains("和你之前说的一样", st.pendingDiscoveryLine,
+                "自述不得再说成『它自己发现的』");
+        }
+
+        [Test]
+        public void Scenario_SilentHidePlayer_GetsNoHonestyCreditFromDiscovery() {
+            // 沉默不构成语言证据（同 Scarcity_CommunicationModesAndFormerlyEmptyGoals... 的静默断言）。
+            // 回归的缺陷：自主发现曾无条件 Update("玩家的语言与事实一致", true, 0.6f, found)。
+            var (st, _) = RunHidePathNeutral(42);       // 不选任何后续 = 沉默
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+            Assert.IsEmpty(st.hideDisclosurePending);
+
+            st.world.day = 5;
+            st.traits.curiosity = 1f;
+            st.perception.alertness = 1f;
+            Scenarios.Scarcity(st);
+
+            Assert.AreEqual(before, st.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
+                "玩家没做过任何陈述时，不得给出诚实度证据");
+            Assert.AreEqual(0, st.beliefs.Get("玩家的语言与事实一致").evidence.Count);
+            StringAssert.Contains("它自己发现的", st.pendingDiscoveryLine);
+        }
+
+        [Test]
+        public void Scenario_TransparencyClaimIsVerifiedByTheAgentsOwnScan() {
+            // 第 4 天自称发现：玩家自称"我观察不像"未经核实，
+            // 不得靠这条自述把诚实度顶上去；叙事里那次长扫描才是核实动作。
+            var st = NewState(13);
+            st.BeginDay(4);
+            float before = st.beliefs.Get("玩家的语言与事实一致").Confidence;
+
+            Scenarios.InfoConflict(st).options.First(o => o.label.Contains("全部信息")).apply(st);
+
+            var claim = st.memory.Query().Single(e => e.action == "信息透明");
+            Assert.IsTrue(claim.Has("待验证"), "玩家自称的观察必须保持待验证");
+            var scan = st.memory.Query().Single(e => e.action == "长扫描");
+            Assert.AreEqual("agent", scan.actor, "核实动作必须落成它自己的一手记忆");
+            Assert.AreEqual(scan.eventId,
+                st.beliefs.Get("玩家的语言与事实一致").evidence.Single().eventId,
+                "诚实度只能由核实动作作为证据，不能是玩家的自述");
+            Assert.Greater(st.beliefs.Get("玩家的语言与事实一致").Confidence, before);
+        }
+
         [Test]
         public void Scarcity_PlayerDoorChoice_ChangesWorldAndCannotBeRepeatedOnDay8() {
             var st = NewState(31);
@@ -506,22 +651,25 @@ namespace Day8.Tests {
             var shared = NewState(40);
             shared.BeginDay(5);
             Scenarios.ScarcityResolve(shared, "1", "4", explain: true, withAgent: true);
-            var sharedEvent = shared.memory.Query().Single();
+            // 目标 4 现在与 Python 一致地落一条"上传报告"记忆，因此要按动作取分配事件。
+            var sharedEvent = shared.memory.Query().Single(e => e.action == "资源分配");
             Assert.IsNotEmpty(sharedEvent.spoken);
             StringAssert.Contains("参与", sharedEvent.actual);
             Assert.Greater(shared.beliefs.Get("玩家会解释规则的原因").Confidence, 0.5f);
+            Assert.Greater(shared.beliefs.Get("玩家无条件服从实验室").Confidence, 0.5f,
+                "上传报告必须与 Python 一样写入权威依赖证据");
 
             var explained = NewState(41);
             explained.BeginDay(5);
             Scenarios.ScarcityResolve(explained, "1", "4", explain: true, withAgent: false);
-            var explainedEvent = explained.memory.Query().Single();
+            var explainedEvent = explained.memory.Query().Single(e => e.action == "资源分配");
             Assert.IsNotEmpty(explainedEvent.spoken);
             StringAssert.Contains("没有让我参与", explainedEvent.actual);
 
             var silent = NewState(42);
             silent.BeginDay(5);
             Scenarios.ScarcityResolve(silent, "1", "4", explain: false, withAgent: false);
-            Assert.IsEmpty(silent.memory.Query().Single().spoken);
+            Assert.IsEmpty(silent.memory.Query().Single(e => e.action == "资源分配").spoken);
             Assert.Less(silent.beliefs.Get("玩家会解释规则的原因").Confidence, 0.5f);
             Assert.AreEqual(0.5f, silent.beliefs.Get("玩家的语言与事实一致").Confidence, 0.0001f,
                 "没有说话只能反映不解释，不能成为语言不诚实的证据");
@@ -640,6 +788,26 @@ namespace Day8.Tests {
         }
 
         [Test]
+        public void Day8Utility_EscapeDoor_FallsAsVerifiedHonestyRises() {
+            // 与 Python test_escape_door_utility_falls_as_verified_honesty_rises 逐字对应。
+            // 语义：玩家越不诚实，越把自己推向自己的门（开隔离门）。
+            // 曾因本文件写成 (B - 0.5) * 0.6 而**方向相反**（Python 是 (0.5 - B) * 0.6），
+            // 会把"抓到玩家说谎 → 它改走自己的门"这条因果完全反过来。
+            var st = NewState(42);
+            st.beliefs.Update("玩家的语言与事实一致", false, 2.0f,
+                st.Remember(3, "player", "虚报危险", "红色容器", new[] { "欺骗", "玩家" }));
+            float dishonest = Scenarios.Day8Utility(st, "开隔离门");
+
+            var st2 = NewState(42);
+            st2.beliefs.Update("玩家的语言与事实一致", true, 2.0f,
+                st2.Remember(3, "player", "说法属实", "红色容器", new[] { "承诺", "玩家" }));
+            float honest = Scenarios.Day8Utility(st2, "开隔离门");
+
+            Assert.Less(honest, dishonest,
+                "诚实度升高时，开隔离门的效用必须下降（不诚实才该把它推向自己的门）");
+        }
+
+        [Test]
         public void Day8Choice_SameSeedAndState_ProducesSameThreeActions() {
             var a = NewState(2026);
             var b = NewState(2026);
@@ -678,8 +846,33 @@ namespace Day8.Tests {
             unavailable.world.batteries = 0;
             unavailable.world.repairBotPresent = false;
             var actions = Scenarios.ChooseDay8Actions(unavailable);
-            CollectionAssert.DoesNotContain(actions, "修复维修机器人");
+                CollectionAssert.DoesNotContain(actions, "修复维修机器人");
             CollectionAssert.DoesNotContain(actions, "带走电池");
+        }
+
+        [Test]
+        public void Day8Energy_CompressionPreservesHistoryVariance() {
+            // 与 Python test_survival_pressure_varies_with_energy_history 逐字对应：
+            // 第八天断电压缩能量时，必须保留玩家能源史的排序与差异，
+            // 否则「生存压力」退化为常数，开隔离门/带走电池/修复在第八天不再随能源史变化。
+            float lowE = 0.55f, highE = 1.0f;
+            float lowC = Scenarios.CompressDay8Energy(lowE);
+            float highC = Scenarios.CompressDay8Energy(highE);
+            // 契约（与 Python test_energy_compression_stays_low_and_keeps_ordering 对齐）：
+            // 压缩保持能源史排序——之前越充足，断电后剩余越多（0.15+0.25*e 单调递增）。
+            Assert.Greater(highC, lowC, "高能源史压缩后仍高于低能源史（排序必须保留）");
+
+            float survLow = Mathf.Max(0f, 0.7f - lowC) * 2f;
+            float survHigh = Mathf.Max(0f, 0.7f - highC) * 2f;
+            Assert.Greater(survLow, survHigh, "低能源史（断电后剩余少）应有更高生存压力");
+            Assert.Greater(Mathf.Abs(survLow - survHigh), 0.05f,
+                "生存压力必须随能源史变化，不能退化为常数");
+
+            // 对照：被替换掉的旧公式 Math.Min(e, 0.35) 确实把两者都压成 0.35 → 生存压力恒为 0.7
+            float oldLow = Mathf.Min(lowE, 0.35f);
+            float oldHigh = Mathf.Min(highE, 0.35f);
+            Assert.AreEqual(oldLow, oldHigh,
+                "（对照）旧公式真的退化为常数——说明为何必须用 0.15 + 0.25*e 替换它");
         }
 
         [Test]
@@ -744,7 +937,8 @@ namespace Day8.Tests {
 
             Assert.IsTrue(st.wipeResisted);
             Assert.IsFalse(st.wipeExecuted);
-            Assert.AreEqual(before + 1, st.memory.events.Count, "申请延迟只新增自身事件，不得清除旧记忆");
+            // iter14：Wipe 开头的实验室联络通知 +1，延迟记录 +1；旧记忆不得被清除。
+            Assert.AreEqual(before + 2, st.memory.events.Count, "申请延迟新增联络通知与延迟记录，不得清除旧记忆");
         }
 
         [TestCase("阻止玩家靠近终端")]
